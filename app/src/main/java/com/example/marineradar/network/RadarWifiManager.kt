@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
+import com.example.marineradar.debug.FileLogger
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 
@@ -60,6 +61,7 @@ class RadarWifiManager(private val context: Context) {
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                FileLogger.log("INFO", "RadarWifiManager: nätverk tillgängligt för $ssid")
                 // Viktigt: binda processen så DNS/vanlig trafik också kan
                 // routas hit vid behov, men vi använder ändå explicit
                 // socket-binding i RadarUdpClient för säkerhets skull.
@@ -68,14 +70,17 @@ class RadarWifiManager(private val context: Context) {
             }
 
             override fun onUnavailable() {
-                trySend(WifiConnectionState.Failed("Kunde inte ansluta till $ssid"))
+                FileLogger.log("WARN", "RadarWifiManager: '$ssid' onUnavailable (fel SSID/lösenord, eller radarn är avstängd/utom räckhåll?)")
+                trySend(WifiConnectionState.Failed("Kunde inte ansluta till $ssid – kontrollera att radarn är påslagen och SSID/lösenord stämmer"))
             }
 
             override fun onLost(network: Network) {
+                FileLogger.log("WARN", "RadarWifiManager: anslutning till '$ssid' tappad")
                 trySend(WifiConnectionState.Failed("Anslutningen till $ssid tappades"))
             }
         }
 
+        FileLogger.log("INFO", "RadarWifiManager: begär nätverk för SSID '$ssid'")
         connectivityManager.requestNetwork(request, callback)
 
         awaitClose {

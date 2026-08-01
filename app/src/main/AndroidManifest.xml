@@ -16,6 +16,7 @@
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
 
     <application
+        android:name=".MarineRadarApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Marine Radar"

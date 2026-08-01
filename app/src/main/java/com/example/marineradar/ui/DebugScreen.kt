@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -13,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.debug.PacketLogEntry
 import com.example.marineradar.debug.PacketLogger
 import com.example.marineradar.network.RadarPortScanner
@@ -24,13 +27,32 @@ fun DebugScreen(
     portScanner: RadarPortScanner?,
     modifier: Modifier = Modifier
 ) {
+    var subTab by remember { mutableStateOf(0) }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = subTab) {
+            Tab(selected = subTab == 0, onClick = { subTab = 0 }, text = { Text("Paket") })
+            Tab(selected = subTab == 1, onClick = { subTab = 1 }, text = { Text("Applogg") })
+            Tab(selected = subTab == 2, onClick = { subTab = 2 }, text = { Text("Krasch") })
+        }
+
+        when (subTab) {
+            0 -> PacketLogTab(portScanner, Modifier.weight(1f))
+            1 -> AppLogTab(Modifier.weight(1f))
+            2 -> CrashLogTab(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun PacketLogTab(portScanner: RadarPortScanner?, modifier: Modifier) {
     val context = LocalContext.current
     val entries by PacketLogger.entries.collectAsState()
     var selected by remember { mutableStateOf<PacketLogEntry?>(null) }
     var scanStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
+    Column(modifier = modifier.padding(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -41,21 +63,26 @@ fun DebugScreen(
                     val scanner = portScanner ?: return@Button
                     scope.launch {
                         scanStatus = "Skannar portar …"
-                        var found = 0
-                        scanner.scan().collect { result ->
-                            if (result.respondersFound > 0) found++
+                        try {
+                            var found = 0
+                            scanner.scan().collect { result ->
+                                if (result.respondersFound > 0) found++
+                            }
+                            scanStatus = "Klar. Portar med svar: $found (se loggen nedan)"
+                        } catch (e: Exception) {
+                            FileLogger.log("ERROR", "Portskanning misslyckades", e)
+                            scanStatus = "Skanning avbröts: ${e.message}"
                         }
-                        scanStatus = "Klar. Portar med svar: $found (se loggen nedan)"
                     }
                 }
             ) { Text("Skanna portar") }
 
             OutlinedButton(onClick = { PacketLogger.clear() }) {
-                Text("Rensa logg")
+                Text("Rensa")
             }
 
-            OutlinedButton(onClick = { shareLog(context) }) {
-                Text("Dela logg")
+            OutlinedButton(onClick = { sharePacketLog(context) }) {
+                Text("Dela")
             }
         }
 
@@ -66,7 +93,7 @@ fun DebugScreen(
 
         Spacer(Modifier.height(8.dp))
         Text(
-            "Trafiklogg (${entries.size} paket) – tryck på en rad för hex-dump",
+            "Trafiklogg (${entries.size} paket, sparas även till disk) – tryck på en rad för hex-dump",
             style = MaterialTheme.typography.titleSmall
         )
         Spacer(Modifier.height(4.dp))
@@ -104,9 +131,70 @@ fun DebugScreen(
     }
 }
 
-private fun shareLog(context: Context) {
-    val text = PacketLogger.exportAsText()
-    val file = File(context.cacheDir, "marine_radar_log.txt")
+@Composable
+private fun AppLogTab(modifier: Modifier) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf(FileLogger.readLog()) }
+
+    Column(modifier = modifier.padding(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { text = FileLogger.readLog() }) { Text("Uppdatera") }
+            OutlinedButton(onClick = { FileLogger.clearLog(); text = FileLogger.readLog() }) { Text("Rensa") }
+            OutlinedButton(onClick = { shareText(context, text, "app_log.txt", "Dela applogg") }) { Text("Dela") }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Sparas löpande på disk (${FileLogger.logFilePath()}), finns kvar mellan sessioner.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text,
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+        )
+    }
+}
+
+@Composable
+private fun CrashLogTab(modifier: Modifier) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf(FileLogger.readLastCrash()) }
+
+    Column(modifier = modifier.padding(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { text = FileLogger.readLastCrash() }) { Text("Uppdatera") }
+            if (text != null) {
+                OutlinedButton(onClick = { shareText(context, text ?: "", "crash_log.txt", "Dela kraschrapport") }) {
+                    Text("Dela")
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (text == null) {
+            Text("Ingen krasch registrerad sedan appen senast installerades. Bra!")
+        } else {
+            Text(
+                text ?: "",
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            )
+        }
+    }
+}
+
+private fun sharePacketLog(context: Context) {
+    shareText(context, PacketLogger.exportAsText(), "marine_radar_packets.txt", "Dela trafiklogg")
+}
+
+private fun shareText(context: Context, text: String, filename: String, title: String) {
+    val file = File(context.cacheDir, filename)
     file.writeText(text)
 
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -115,5 +203,5 @@ private fun shareLog(context: Context) {
         putExtra(Intent.EXTRA_STREAM, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(Intent.createChooser(intent, "Dela trafiklogg"))
+    context.startActivity(Intent.createChooser(intent, title))
 }

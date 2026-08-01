@@ -1,0 +1,37 @@
+package com.example.marineradar.settings
+
+import android.content.Context
+
+/**
+ * Sparar WiFi-uppgifter mellan sessioner med SharedPreferences (enkelt,
+ * inga extra beroenden). Uppgifterna lagras endast lokalt på telefonen.
+ *
+ * OBS: SharedPreferences lagras i klartext på disk. Det är okej för det
+ * här bruket (ditt eget WiFi-lösenord till din egen radar, lokalt på din
+ * egen telefon), men om appen någonsin ska dela enhet med andra bör
+ * EncryptedSharedPreferences (androidx.security) användas istället.
+ */
+class SettingsStore(context: Context) {
+
+    private val prefs = context.getSharedPreferences("radar_settings", Context.MODE_PRIVATE)
+
+    companion object {
+        private const val KEY_SSID = "wifi_ssid"
+        private const val KEY_PASSWORD = "wifi_password"
+
+        // Förifyllda standardvärden tills användaren sparar egna.
+        const val DEFAULT_SSID = "DRS4W05619771"
+        const val DEFAULT_PASSWORD = "16720hhb"
+    }
+
+    fun getSsid(): String = prefs.getString(KEY_SSID, DEFAULT_SSID) ?: DEFAULT_SSID
+
+    fun getPassword(): String = prefs.getString(KEY_PASSWORD, DEFAULT_PASSWORD) ?: DEFAULT_PASSWORD
+
+    fun save(ssid: String, password: String) {
+        prefs.edit()
+            .putString(KEY_SSID, ssid)
+            .putString(KEY_PASSWORD, password)
+            .apply()
+    }
+}

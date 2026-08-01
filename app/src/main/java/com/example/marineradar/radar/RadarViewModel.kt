@@ -4,15 +4,20 @@ import android.app.Application
 import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.network.RadarUdpClient
 import com.example.marineradar.network.RadarWifiManager
 import com.example.marineradar.network.WifiConnectionState
+import com.example.marineradar.settings.SettingsStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import java.net.SocketTimeoutException
 
 const val ANGLE_STEPS = 2048 // upplösning på PPI-bilden (antal spokes per varv)
+private const val TAG = "RadarViewModel"
 
 sealed class RadarAppState {
     data object Disconnected : RadarAppState()
@@ -22,9 +27,18 @@ sealed class RadarAppState {
     data class Error(val message: String) : RadarAppState()
 }
 
+/**
+ * All nätverkskod körs i coroutines som prenumereras på via [catch] innan
+ * [collect] – det är avsiktligt och viktigt: utan det kraschar hela appen
+ * så fort t.ex. discovery-frågan får timeout (radarn svarar inte inom
+ * tidsgränsen), eftersom en ofångad coroutine-exception annars dödar
+ * processen. Nu visas ett felmeddelande i UI:t istället, och detaljerna
+ * hamnar i filloggen under Felsökning.
+ */
 class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     private val wifiManager = RadarWifiManager(application)
+    val settings = SettingsStore(application)
 
     private val _appState = MutableStateFlow<RadarAppState>(RadarAppState.Disconnected)
     val appState: StateFlow<RadarAppState> = _appState.asStateFlow()
@@ -38,45 +52,88 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
 
     fun connect(ssid: String, password: String) {
+        settings.save(ssid, password)
+        FileLogger.log("INFO", "$TAG: Ansluter till WiFi '$ssid'")
         _appState.value = RadarAppState.ConnectingWifi
+
         viewModelScope.launch {
-            wifiManager.connect(ssid, password).collect { state ->
-                when (state) {
-                    is WifiConnectionState.Connected -> {
-                        _appState.value = RadarAppState.DiscoveringRadar
-                        _connectedNetwork.value = state.network
-                        startRadarSession(RadarUdpClient(state.network))
-                    }
-                    is WifiConnectionState.Failed -> {
-                        _appState.value = RadarAppState.Error(state.reason)
-                    }
-                    else -> Unit
+            wifiManager.connect(ssid, password)
+                .catch { e ->
+                    FileLogger.log("ERROR", "$TAG: WiFi-anslutning misslyckades", e)
+                    _appState.value = RadarAppState.Error(
+                        "WiFi-fel: ${e.message ?: e.javaClass.simpleName}"
+                    )
                 }
-            }
+                .collect { state ->
+                    when (state) {
+                        is WifiConnectionState.Connected -> {
+                            FileLogger.log("INFO", "$TAG: WiFi anslutet")
+                            _appState.value = RadarAppState.DiscoveringRadar
+                            _connectedNetwork.value = state.network
+                            startRadarSession(RadarUdpClient(state.network))
+                        }
+                        is WifiConnectionState.Failed -> {
+                            FileLogger.log("WARN", "$TAG: WiFi misslyckades: ${state.reason}")
+                            _appState.value = RadarAppState.Error(state.reason)
+                        }
+                        else -> Unit
+                    }
+                }
         }
     }
 
     private fun startRadarSession(udpClient: RadarUdpClient) {
         viewModelScope.launch {
-            udpClient.discover().collect { info ->
-                _appState.value = RadarAppState.Streaming(info.model)
-                startSpokeListener(udpClient)
-            }
+            udpClient.discover()
+                .catch { e ->
+                    val friendly = when (e) {
+                        is SocketTimeoutException ->
+                            "Ingen radar svarade på discovery-frågan inom tidsgränsen. " +
+                                "Radarn kan svara på en annan port än väntat – kör " +
+                                "Skanna portar under Felsökning för att undersöka."
+                        else -> "Fel vid radar-discovery: ${e.message ?: e.javaClass.simpleName}"
+                    }
+                    FileLogger.log("ERROR", "$TAG: discover() misslyckades", e)
+                    _appState.value = RadarAppState.Error(friendly)
+                }
+                .collect { info ->
+                    FileLogger.log("INFO", "$TAG: Radar hittad, modell=${info.model}")
+                    _appState.value = RadarAppState.Streaming(info.model)
+                    startSpokeListener(udpClient)
+                }
         }
     }
 
     private fun startSpokeListener(udpClient: RadarUdpClient) {
         viewModelScope.launch {
-            udpClient.listenForSpokes().collect { raw ->
-                val spoke = SpokeDecoder.decode(raw) ?: return@collect
-                val index = ((spoke.angle / (2 * Math.PI)) * ANGLE_STEPS)
-                    .toInt()
-                    .coerceIn(0, ANGLE_STEPS - 1)
+            udpClient.listenForSpokes()
+                .catch { e ->
+                    FileLogger.log("ERROR", "$TAG: Spoke-lyssnare kraschade", e)
+                    _appState.value = RadarAppState.Error(
+                        "Tappade anslutningen till spoke-strömmen: ${e.message ?: e.javaClass.simpleName}"
+                    )
+                }
+                .collect { raw ->
+                    try {
+                        val spoke = SpokeDecoder.decode(raw) ?: return@collect
+                        val index = ((spoke.angle / (2 * Math.PI)) * ANGLE_STEPS)
+                            .toInt()
+                            .coerceIn(0, ANGLE_STEPS - 1)
 
-                val updated = _spokeBuffer.value.copyOf()
-                updated[index] = spoke.intensities
-                _spokeBuffer.value = updated
-            }
+                        val updated = _spokeBuffer.value.copyOf()
+                        updated[index] = spoke.intensities
+                        _spokeBuffer.value = updated
+                    } catch (e: Exception) {
+                        // Ett enskilt trasigt/oväntat paket ska aldrig krascha
+                        // appen – logga och hoppa bara över det.
+                        FileLogger.log("WARN", "$TAG: Kunde inte avkoda spoke-paket (${raw.size} B)", e)
+                    }
+                }
         }
+    }
+
+    fun reset() {
+        _appState.value = RadarAppState.Disconnected
+        _connectedNetwork.value = null
     }
 }

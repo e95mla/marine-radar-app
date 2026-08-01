@@ -55,8 +55,8 @@ fun RadarScreen(viewModel: RadarViewModel) {
     val spokeBuffer by viewModel.spokeBuffer.collectAsState()
     val network by viewModel.connectedNetwork.collectAsState()
 
-    var ssid by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var ssid by remember { mutableStateOf(viewModel.settings.getSsid()) }
+    var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
     var tab by remember { mutableStateOf(0) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -105,6 +105,10 @@ fun RadarScreen(viewModel: RadarViewModel) {
                     if (state is RadarAppState.Error) {
                         Spacer(Modifier.height(12.dp))
                         Text(state.message, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { tab = 1 }) {
+                            Text("Visa felsökningslogg")
+                        }
                     }
                 }
             }

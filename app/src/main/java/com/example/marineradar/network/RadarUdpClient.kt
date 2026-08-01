@@ -1,6 +1,7 @@
 package com.example.marineradar.network
 
 import android.net.Network
+import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.debug.PacketLogEntry
 import com.example.marineradar.debug.PacketLogger
 import kotlinx.coroutines.Dispatchers
@@ -73,12 +74,19 @@ class RadarUdpClient(private val network: Network) {
      * eller efter timeout.
      */
     fun discover() = callbackFlow<RadarInfo> {
-        val socket = DatagramSocket(null).apply {
-            reuseAddress = true
-            bind(InetSocketAddress(0))
-            broadcast = true
+        FileLogger.log("INFO", "RadarUdpClient: startar discovery mot ${RadarProtocolConstants.DISCOVERY_BROADCAST}:${RadarProtocolConstants.DISCOVERY_PORT}")
+
+        val socket = try {
+            DatagramSocket(null).apply {
+                reuseAddress = true
+                bind(InetSocketAddress(0))
+                broadcast = true
+            }.also { network.bindSocket(it) }
+        } catch (e: Exception) {
+            FileLogger.log("ERROR", "RadarUdpClient: kunde inte skapa discovery-socket", e)
+            close(e)
+            return@callbackFlow
         }
-        network.bindSocket(socket)
 
         val queryBytes = RadarProtocolConstants.N96_QUERY.toByteArray()
         val target = InetAddress.getByName(RadarProtocolConstants.DISCOVERY_BROADCAST)
@@ -124,6 +132,7 @@ class RadarUdpClient(private val network: Network) {
 
             trySend(RadarInfo(receivePacket.address, model))
         } catch (e: Exception) {
+            FileLogger.log("WARN", "RadarUdpClient: discovery misslyckades (${e.javaClass.simpleName}: ${e.message})")
             close(e)
         }
 
@@ -136,11 +145,18 @@ class RadarUdpClient(private val network: Network) {
      * innehållet.
      */
     fun listenForSpokes() = callbackFlow<ByteArray> {
-        val socket = DatagramSocket(null).apply {
-            reuseAddress = true
-            bind(InetSocketAddress(RadarProtocolConstants.SPOKE_DATA_PORT))
+        FileLogger.log("INFO", "RadarUdpClient: lyssnar efter spoke-data på port ${RadarProtocolConstants.SPOKE_DATA_PORT}")
+
+        val socket = try {
+            DatagramSocket(null).apply {
+                reuseAddress = true
+                bind(InetSocketAddress(RadarProtocolConstants.SPOKE_DATA_PORT))
+            }.also { network.bindSocket(it) }
+        } catch (e: Exception) {
+            FileLogger.log("ERROR", "RadarUdpClient: kunde inte binda spoke-socket (port upptagen?)", e)
+            close(e)
+            return@callbackFlow
         }
-        network.bindSocket(socket)
 
         val buf = ByteArray(8192)
         try {
@@ -162,6 +178,7 @@ class RadarUdpClient(private val network: Network) {
                 trySend(data)
             }
         } catch (e: Exception) {
+            FileLogger.log("ERROR", "RadarUdpClient: spoke-lyssnare avbröts", e)
             close(e)
         }
 

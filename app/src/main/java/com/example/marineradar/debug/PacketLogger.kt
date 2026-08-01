@@ -1,8 +1,10 @@
 package com.example.marineradar.debug
 
+import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,17 +44,51 @@ data class PacketLogEntry(
  */
 object PacketLogger {
     private const val MAX_ENTRIES = 2000
+    private const val MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024 // 3 MB, rullar över därefter
 
     private val _entries = MutableStateFlow<List<PacketLogEntry>>(emptyList())
     val entries: StateFlow<List<PacketLogEntry>> = _entries.asStateFlow()
 
+    private var packetFile: File? = null
+
+    /** Måste anropas en gång vid appstart för att aktivera diskpersistens. */
+    fun init(context: Context) {
+        val dir = File(context.filesDir, "logs").apply { mkdirs() }
+        packetFile = File(dir, "packets.log")
+    }
+
     fun log(entry: PacketLogEntry) {
         val updated = (_entries.value + entry).takeLast(MAX_ENTRIES)
         _entries.value = updated
+        persist(entry)
+    }
+
+    /** Läser in tidigare sessioners paketlogg som text (för visning/export). */
+    fun readPersistedLog(maxChars: Int = 20000): String {
+        val file = packetFile ?: return "(diskloggning ej initierad)"
+        if (!file.exists()) return "(ingen tidigare loggfil hittad)"
+        val text = file.readText()
+        return if (text.length > maxChars) "…(avkortat)…\n" + text.takeLast(maxChars) else text
+    }
+
+    private fun persist(entry: PacketLogEntry) {
+        val file = packetFile ?: return
+        try {
+            if (file.exists() && file.length() > MAX_FILE_SIZE_BYTES) {
+                val kept = file.readText().takeLast(MAX_FILE_SIZE_BYTES / 2)
+                file.writeText(kept)
+            }
+            file.appendText(entry.summary + "  hex=" + entry.hexDump.take(120) + "\n")
+        } catch (_: Exception) {
+            // Diskloggning får aldrig krascha appen.
+        }
     }
 
     fun clear() {
         _entries.value = emptyList()
+        try {
+            packetFile?.writeText("")
+        } catch (_: Exception) { }
     }
 
     fun exportAsText(): String {
