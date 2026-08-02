@@ -1,11 +1,10 @@
 package com.example.marineradar
 
 import android.Manifest
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
@@ -20,6 +19,7 @@ import com.example.marineradar.radar.RadarAppState
 import com.example.marineradar.radar.RadarViewModel
 import com.example.marineradar.ui.DebugScreen
 import com.example.marineradar.ui.PpiView
+import com.example.marineradar.ui.RadarControlPanel
 
 class MainActivity : ComponentActivity() {
 
@@ -44,17 +44,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                RadarScreen(viewModel)
+                RadarScreen(viewModel, onExit = { finishAndRemoveTask() })
             }
         }
     }
 }
 
 @Composable
-fun RadarScreen(viewModel: RadarViewModel) {
+fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val appState by viewModel.appState.collectAsState()
-    val spokeBuffer by viewModel.spokeBuffer.collectAsState()
+    val ppiRenderer by viewModel.ppiRenderer.collectAsState()
     val network by viewModel.connectedNetwork.collectAsState()
+    val radarControls by viewModel.radarControls.collectAsState()
+    val isEmulator by viewModel.isEmulatorMode.collectAsState()
 
     var ssid by remember { mutableStateOf(viewModel.settings.getSsid()) }
     var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
@@ -62,9 +64,14 @@ fun RadarScreen(viewModel: RadarViewModel) {
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Felsökning") })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Felsökning") })
+                }
+                TextButton(onClick = onExit) {
+                    Text("✕ Avsluta", color = MaterialTheme.colorScheme.error)
+                }
             }
 
             if (tab == 1) {
@@ -76,78 +83,85 @@ fun RadarScreen(viewModel: RadarViewModel) {
                 return@Column
             }
 
-        when (val state = appState) {
-            is RadarAppState.Disconnected, is RadarAppState.Error -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Anslut till DRS4W", style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.height(16.dp))
-                    OutlinedTextField(
-                        value = ssid,
-                        onValueChange = { ssid = it },
-                        label = { Text("WiFi-namn (SSID) på radarn") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Lösenord (lämna tomt om öppet nät)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Button(onClick = { viewModel.connect(ssid, password) }) {
-                        Text("Anslut")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(onClick = { viewModel.connectEmulator() }) {
-                        Text("🧪 Testa med emulator (ingen radar behövs)")
-                    }
-                    if (state is RadarAppState.Error) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(state.message, color = MaterialTheme.colorScheme.error)
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = { tab = 1 }) {
-                            Text("Visa felsökningslogg")
-                        }
-                    }
-                }
-            }
-
-            is RadarAppState.ConnectingWifi -> StatusScreen("Ansluter till WiFi …")
-            is RadarAppState.DiscoveringRadar -> StatusScreen("Söker efter radar …")
-
-            is RadarAppState.Streaming -> {
-                val isEmulator by viewModel.isEmulatorMode.collectAsState()
-                Column(Modifier.fillMaxSize()) {
-                    Row(
+            when (val state = appState) {
+                is RadarAppState.Disconnected, is RadarAppState.Error -> {
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
-                                if (isEmulator) "  🧪 EMULATOR (simulerad data)" else "",
-                            style = MaterialTheme.typography.labelMedium
+                        Text("Anslut till DRS4W", style = MaterialTheme.typography.headlineSmall)
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = ssid,
+                            onValueChange = { ssid = it },
+                            label = { Text("WiFi-namn (SSID) på radarn") },
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        TextButton(onClick = { viewModel.reset() }) {
-                            Text("Koppla från")
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("Lösenord (lämna tomt om öppet nät)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { viewModel.connect(ssid, password) }) {
+                            Text("Anslut")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(onClick = { viewModel.connectEmulator() }) {
+                            Text("🧪 Testa med emulator (ingen radar behövs)")
+                        }
+                        if (state is RadarAppState.Error) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(state.message, color = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = { tab = 1 }) {
+                                Text("Visa felsökningslogg")
+                            }
                         }
                     }
-                    PpiView(
-                        spokeBuffer = spokeBuffer,
-                        modifier = Modifier.weight(1f)
-                    )
+                }
+
+                is RadarAppState.ConnectingWifi -> StatusScreen("Ansluter till WiFi …")
+                is RadarAppState.DiscoveringRadar -> StatusScreen("Söker efter radar …")
+
+                is RadarAppState.Streaming -> {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
+                                    if (isEmulator) "  🧪 EMULATOR (simulerad data)" else "",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            TextButton(onClick = { viewModel.reset() }) {
+                                Text("Koppla från")
+                            }
+                        }
+                        PpiView(
+                            renderer = ppiRenderer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        RadarControlPanel(
+                            controls = radarControls,
+                            onPowerToggle = { viewModel.setPower(it) },
+                            onRangeStep = { viewModel.stepRange(it) },
+                            onGainChange = { auto, value -> viewModel.setGain(auto, value) },
+                            onSeaChange = { auto, value -> viewModel.setSea(auto, value) },
+                            onRainChange = { auto, value -> viewModel.setRain(auto, value) }
+                        )
+                    }
                 }
             }
-        }
         }
     }
 }

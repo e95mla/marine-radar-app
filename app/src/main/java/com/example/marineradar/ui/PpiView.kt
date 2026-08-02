@@ -1,77 +1,51 @@
 package com.example.marineradar.ui
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import com.example.marineradar.radar.ANGLE_STEPS
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
+import androidx.compose.ui.graphics.asImageBitmap
+import com.example.marineradar.radar.PpiRenderer
+import kotlinx.coroutines.delay
 
 /**
- * Klassisk PPI-vy (Plan Position Indicator): centrum = eget fartyg,
- * varje spoke ritas som en linje utåt där färgen/alphan representerar
- * echo-styrkan i varje pixel längs linjen.
+ * Visar [PpiRenderer]s bitmap. Bitmappen ritas kontinuerligt i bakgrunden
+ * (en radiell linje per mottagen spoke, se [PpiRenderer.drawSpoke]) –
+ * den här composabeln behöver bara sampla den med en fast, låg
+ * bildfrekvens (~15 fps) istället för att recomponera på varje enskild
+ * spoke, vilket annars skulle vara långsamt och onödigt (radarn kan
+ * skicka hundratals spokes per sekund).
  */
 @Composable
-fun PpiView(spokeBuffer: Array<ByteArray>, modifier: Modifier = Modifier) {
-    Canvas(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        val center = Offset(size.width / 2f, size.height / 2f)
-        val maxRadius = min(size.width, size.height) / 2f
+fun PpiView(renderer: PpiRenderer?, modifier: Modifier = Modifier) {
+    var frame by remember { mutableIntStateOf(0) }
 
-        // Rangeringar (avståndscirklar) som referens
-        val rings = 4
-        for (i in 1..rings) {
-            drawCircle(
-                color = Color(0xFF0B3B0B),
-                radius = maxRadius * i / rings,
-                center = center,
-                style = Stroke(width = 1f)
-            )
+    LaunchedEffect(renderer) {
+        if (renderer == null) return@LaunchedEffect
+        while (true) {
+            frame++
+            delay(66) // ~15 fps
         }
+    }
 
-        for (angleIndex in spokeBuffer.indices) {
-            val intensities = spokeBuffer[angleIndex]
-            if (intensities.isEmpty()) continue
-
-            val angle = (angleIndex.toFloat() / ANGLE_STEPS) * (2 * Math.PI).toFloat() -
-                (Math.PI / 2).toFloat() // 0 rad = rakt upp på skärmen
-            val dx = cos(angle)
-            val dy = sin(angle)
-
-            val step = maxRadius / intensities.size
-            for (pixelIndex in intensities.indices) {
-                val strength = intensities[pixelIndex].toInt() and 0xFF
-                if (strength == 0) continue
-
-                val r = pixelIndex * step
-                val point = Offset(center.x + dx * r, center.y + dy * r)
-                val alpha = (strength / 255f).coerceIn(0f, 1f)
-
-                drawCircle(
-                    color = Color(0f, 1f, 0f, alpha),
-                    radius = step.coerceAtLeast(1.5f),
-                    center = point
+    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        if (renderer != null) {
+            key(frame) {
+                Image(
+                    bitmap = renderer.bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
-
-        // Egen position i centrum
-        drawCircle(
-            color = Color.White,
-            radius = 4f,
-            center = center,
-            style = Stroke(width = 2f, cap = StrokeCap.Round)
-        )
     }
 }

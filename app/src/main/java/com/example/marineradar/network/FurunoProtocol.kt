@@ -105,6 +105,9 @@ object FurunoProtocol {
         18 to (NM_METERS * 120).toInt(),
     )
 
+    /** Wire-index sorterade efter stigande räckvidd – används för Range +/-. */
+    val WIRE_INDEX_ORDER: List<Int> = WIRE_INDEX_TO_METERS.entries.sortedBy { it.value }.map { it.key }
+
     // -------------------------------------------------------------------
     // Spoke-encoding-konstanter (från protocol.rs)
     // -------------------------------------------------------------------

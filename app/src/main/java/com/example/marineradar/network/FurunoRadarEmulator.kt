@@ -36,12 +36,26 @@ class FurunoRadarEmulator {
 
     private var job: Job? = null
 
+    /** Enkel mutable state som kommandoservern uppdaterar och spoke-generatorn läser (t.ex. valt range). */
+    private object EmulatorState {
+        @Volatile var transmit = true
+        @Volatile var wireIndex = 6
+        @Volatile var gainAuto = true
+        @Volatile var gainValue = 50
+        @Volatile var seaAuto = true
+        @Volatile var seaValue = 30
+        @Volatile var rainAuto = false
+        @Volatile var rainValue = 20
+    }
+
     fun start(scope: CoroutineScope) {
         if (job != null) return
         FileLogger.log("INFO", "FurunoRadarEmulator: startar (loopback-simulator)")
         job = scope.launch(Dispatchers.IO) {
             launch { runDiscoveryResponder() }
             launch { runSpokeGenerator() }
+            launch { runLoginServer() }
+            launch { runDataServer() }
         }
     }
 
@@ -123,8 +137,10 @@ class FurunoRadarEmulator {
             var targetAngle = 0
 
             while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                val frame = buildFrame(sweepLen, spokesPerFrame, currentAngle, targetAngle, frameSeq)
-                socket.send(DatagramPacket(frame, frame.size, target))
+                if (EmulatorState.transmit) {
+                    val frame = buildFrame(sweepLen, spokesPerFrame, currentAngle, targetAngle, frameSeq)
+                    socket.send(DatagramPacket(frame, frame.size, target))
+                }
 
                 currentAngle = (currentAngle + spokesPerFrame) % FurunoProtocol.SPOKES_PER_REVOLUTION
                 targetAngle = (targetAngle + 3) % FurunoProtocol.SPOKES_PER_REVOLUTION
@@ -145,7 +161,7 @@ class FurunoRadarEmulator {
         targetAngle: Int,
         seq: Int
     ): ByteArray {
-        val wireIndex = 6 // ~2 NM, se FurunoProtocol.WIRE_INDEX_TO_METERS
+        val wireIndex = EmulatorState.wireIndex
         val scale = sweepLen
 
         val header = ByteArray(16)
@@ -219,5 +235,156 @@ class FurunoRadarEmulator {
         }
         while (out.size % 4 != 0) out.add(0)
         return out.toByteArray()
+    }
+
+    // -------------------------------------------------------------------
+    // Kommandokanal: login-server + persistent data/kommando-server,
+    // matchar RadarCommandClient på klientsidan så hela kedjan (Range/
+    // Gain/Sea/Rain/Standby-Transmit) kan testas utan riktig hårdvara.
+    // -------------------------------------------------------------------
+
+    private suspend fun runLoginServer() {
+        var server: java.net.ServerSocket? = null
+        try {
+            server = java.net.ServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), RadarCommandClient.LOGIN_PORT))
+            }
+            FileLogger.log("INFO", "FurunoRadarEmulator: login-server på port ${RadarCommandClient.LOGIN_PORT}")
+
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                val client = try {
+                    server.accept()
+                } catch (e: Exception) {
+                    break
+                }
+                try {
+                    client.use { s ->
+                        s.soTimeout = 3000
+                        val input = s.getInputStream()
+                        val buf = ByteArray(56)
+                        var off = 0
+                        while (off < 56) {
+                            val n = input.read(buf, off, 56 - off)
+                            if (n < 0) break
+                            off += n
+                        }
+                        val output = s.getOutputStream()
+                        output.write(RadarCommandClient.LOGIN_EXPECTED_HEADER)
+                        output.write(byteArrayOf(0x00, 0x01, 0x00, 0x00)) // port-offset = 1
+                        output.flush()
+                    }
+                } catch (e: Exception) {
+                    FileLogger.log("WARN", "FurunoRadarEmulator: login-hantering fel: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            FileLogger.log("ERROR", "FurunoRadarEmulator: login-server kraschade", e)
+        } finally {
+            try {
+                server?.close()
+            } catch (_: Exception) { }
+        }
+    }
+
+    private suspend fun runDataServer() {
+        var server: java.net.ServerSocket? = null
+        try {
+            server = java.net.ServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), RadarCommandClient.LOGIN_PORT + 1))
+            }
+            FileLogger.log("INFO", "FurunoRadarEmulator: kommandokanal på port ${RadarCommandClient.LOGIN_PORT + 1}")
+
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                val client = try {
+                    server.accept()
+                } catch (e: Exception) {
+                    break
+                }
+                kotlinx.coroutines.coroutineScope { launch { handleCommandConnection(client) } }
+            }
+        } catch (e: Exception) {
+            FileLogger.log("ERROR", "FurunoRadarEmulator: kommandoserver kraschade", e)
+        } finally {
+            try {
+                server?.close()
+            } catch (_: Exception) { }
+        }
+    }
+
+    private suspend fun handleCommandConnection(socket: java.net.Socket) {
+        try {
+            socket.use { s ->
+                val output = s.getOutputStream()
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(s.getInputStream()))
+
+                fun send(idHex: Int, args: List<Int>) {
+                    val text = "\$N" + "%02X".format(idHex) + args.joinToString(",", prefix = ",") + "\r\n"
+                    output.write(text.toByteArray(Charsets.US_ASCII))
+                    output.flush()
+                }
+
+                // Initiala rapporter direkt vid anslutning
+                send(0x69, listOf(if (EmulatorState.transmit) 2 else 1, 0, 0, 60, 540, 0))
+                send(0x62, listOf(EmulatorState.wireIndex, 0, 0))
+                send(0x63, listOf(if (EmulatorState.gainAuto) 1 else 0, EmulatorState.gainValue, 0, 80, 0))
+                send(0x64, listOf(if (EmulatorState.seaAuto) 1 else 0, EmulatorState.seaValue, 50, 0, 0, 0))
+                send(0x65, listOf(if (EmulatorState.rainAuto) 1 else 0, EmulatorState.rainValue, 0, 0, 0, 0))
+
+                while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    val line = reader.readLine() ?: break
+                    handleClientCommand(line, ::send)
+                }
+            }
+        } catch (e: Exception) {
+            FileLogger.log("WARN", "FurunoRadarEmulator: kommandoanslutning stängd: ${e.message}")
+        }
+    }
+
+    private fun handleClientCommand(rawLine: String, send: (Int, List<Int>) -> Unit) {
+        val line = rawLine.trim()
+        if (line.isEmpty() || line[0] != '$' || line.length < 2) return
+        val mode = line[1]
+        val rest = line.substring(2)
+        val commaIdx = rest.indexOf(',')
+        val idPart = if (commaIdx == -1) rest else rest.substring(0, commaIdx)
+        val id = idPart.toIntOrNull(16) ?: return
+        val argsPart = if (commaIdx == -1) "" else rest.substring(commaIdx + 1)
+        val args = argsPart.split(',').mapNotNull { it.trim().toIntOrNull() }
+
+        FileLogger.log("INFO", "FurunoRadarEmulator: mottaget kommando $line")
+
+        when (id) {
+            0x69 -> {
+                if (mode == 'S' && args.isNotEmpty()) EmulatorState.transmit = args[0] == 2
+                send(0x69, listOf(if (EmulatorState.transmit) 2 else 1, 0, 0, 60, 540, 0))
+            }
+            0x62 -> {
+                if (mode == 'S' && args.isNotEmpty()) EmulatorState.wireIndex = args[0]
+                send(0x62, listOf(EmulatorState.wireIndex, 0, 0))
+            }
+            0x63 -> {
+                if (mode == 'S' && args.size >= 2) {
+                    EmulatorState.gainAuto = args[0] != 0
+                    EmulatorState.gainValue = args[1]
+                }
+                send(0x63, listOf(if (EmulatorState.gainAuto) 1 else 0, EmulatorState.gainValue, 0, 80, 0))
+            }
+            0x64 -> {
+                if (mode == 'S' && args.size >= 2) {
+                    EmulatorState.seaAuto = args[0] != 0
+                    EmulatorState.seaValue = args[1]
+                }
+                send(0x64, listOf(if (EmulatorState.seaAuto) 1 else 0, EmulatorState.seaValue, 50, 0, 0, 0))
+            }
+            0x65 -> {
+                if (mode == 'S' && args.size >= 2) {
+                    EmulatorState.rainAuto = args[0] != 0
+                    EmulatorState.rainValue = args[1]
+                }
+                send(0x65, listOf(if (EmulatorState.rainAuto) 1 else 0, EmulatorState.rainValue, 0, 0, 0, 0))
+            }
+        }
     }
 }

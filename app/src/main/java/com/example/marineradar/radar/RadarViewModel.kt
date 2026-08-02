@@ -6,10 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.network.FurunoRadarEmulator
+import com.example.marineradar.network.RadarCommandClient
+import com.example.marineradar.network.RadarControls
 import com.example.marineradar.network.RadarUdpClient
 import com.example.marineradar.network.RadarWifiManager
 import com.example.marineradar.network.WifiConnectionState
 import com.example.marineradar.settings.SettingsStore
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +20,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.net.SocketTimeoutException
 
-const val ANGLE_STEPS = 2048 // upplösning på PPI-bilden (antal spokes per varv)
 private const val TAG = "RadarViewModel"
 
 sealed class RadarAppState {
@@ -31,10 +33,9 @@ sealed class RadarAppState {
 /**
  * All nätverkskod körs i coroutines som prenumereras på via [catch] innan
  * [collect] – det är avsiktligt och viktigt: utan det kraschar hela appen
- * så fort t.ex. discovery-frågan får timeout (radarn svarar inte inom
- * tidsgränsen), eftersom en ofångad coroutine-exception annars dödar
- * processen. Nu visas ett felmeddelande i UI:t istället, och detaljerna
- * hamnar i filloggen under Felsökning.
+ * så fort t.ex. discovery-frågan får timeout, eftersom en ofångad
+ * coroutine-exception annars dödar processen. Nu visas ett felmeddelande
+ * i UI:t istället, och detaljerna hamnar i filloggen under Felsökning.
  */
 class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,23 +45,26 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val _appState = MutableStateFlow<RadarAppState>(RadarAppState.Disconnected)
     val appState: StateFlow<RadarAppState> = _appState.asStateFlow()
 
-    // Cirkulär buffer: en rad intensiteter per vinkelsteg. UI:t läser
-    // detta direkt varje frame för att rita PPI-bilden.
-    private val _spokeBuffer = MutableStateFlow(Array(ANGLE_STEPS) { ByteArray(0) })
-    val spokeBuffer: StateFlow<Array<ByteArray>> = _spokeBuffer.asStateFlow()
+    private val _ppiRenderer = MutableStateFlow<PpiRenderer?>(null)
+    val ppiRenderer: StateFlow<PpiRenderer?> = _ppiRenderer.asStateFlow()
 
     private val _connectedNetwork = MutableStateFlow<Network?>(null)
     val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
+
+    private val _radarControls = MutableStateFlow(RadarControls())
+    val radarControls: StateFlow<RadarControls> = _radarControls.asStateFlow()
 
     private var emulator: FurunoRadarEmulator? = null
     private val _isEmulatorMode = MutableStateFlow(false)
     val isEmulatorMode: StateFlow<Boolean> = _isEmulatorMode.asStateFlow()
 
+    private var commandClient: RadarCommandClient? = null
+
     /**
      * Startar en lokal simulator som pratar exakt samma protokoll som en
      * riktig DRS4W, men över loopback (127.0.0.1) – för att kunna testa
-     * hela appens pipeline (discovery → spoke-avkodning → PPI-rendering)
-     * utan att vara i närheten av den riktiga radarn.
+     * hela appens pipeline (discovery → spoke-avkodning → PPI-rendering
+     * → kommandokanal) utan att vara i närheten av den riktiga radarn.
      */
     fun connectEmulator() {
         FileLogger.log("INFO", "$TAG: Startar emulatorläge (simulerad radar, ingen riktig hårdvara)")
@@ -72,10 +76,9 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         em.start(viewModelScope)
 
         // Ge emulatorn en liten stund att hinna binda sina lyssnarsocklar
-        // innan vi börjar fråga den, annars kan första discovery-frågan
-        // hinna skickas innan servern är redo.
+        // innan vi börjar fråga den.
         viewModelScope.launch {
-            kotlinx.coroutines.delay(300)
+            delay(300)
             startRadarSession(RadarUdpClient(null))
         }
     }
@@ -128,7 +131,9 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { info ->
                     FileLogger.log("INFO", "$TAG: Radar hittad, modell=${info.model}")
                     _appState.value = RadarAppState.Streaming(info.model)
+                    _ppiRenderer.value = PpiRenderer()
                     startSpokeListener(udpClient)
+                    startCommandChannel(info.ipAddress)
                 }
         }
     }
@@ -146,16 +151,10 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { raw ->
                     try {
                         val spokes = decoder.decodeFrame(raw)
-                        if (spokes.isEmpty()) return@collect
-
-                        val updated = _spokeBuffer.value.copyOf()
+                        val renderer = _ppiRenderer.value ?: return@collect
                         for (spoke in spokes) {
-                            val index = ((spoke.angle / (2 * Math.PI)) * ANGLE_STEPS)
-                                .toInt()
-                                .coerceIn(0, ANGLE_STEPS - 1)
-                            updated[index] = spoke.intensities
+                            renderer.drawSpoke(spoke.angle, spoke.intensities)
                         }
-                        _spokeBuffer.value = updated
                     } catch (e: Exception) {
                         // Ett enskilt trasigt/oväntat paket ska aldrig krascha
                         // appen – logga och hoppa bara över det.
@@ -165,9 +164,31 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Startar login + kommandokanal mot radarn (Range/Gain/Sea/Rain/Standby-Transmit). */
+    private fun startCommandChannel(radarIp: java.net.InetAddress) {
+        val client = RadarCommandClient()
+        commandClient = client
+        viewModelScope.launch {
+            client.controls.collect { _radarControls.value = it }
+        }
+        viewModelScope.launch {
+            client.connectAndListen(radarIp)
+        }
+    }
+
+    fun setPower(transmit: Boolean) = commandClient?.setPower(transmit)
+    fun stepRange(up: Boolean) = commandClient?.stepRange(up)
+    fun setGain(auto: Boolean, value: Int) = commandClient?.setGain(auto, value)
+    fun setSea(auto: Boolean, value: Int) = commandClient?.setSea(auto, value)
+    fun setRain(auto: Boolean, value: Int) = commandClient?.setRain(auto, value)
+
     fun reset() {
         _appState.value = RadarAppState.Disconnected
         _connectedNetwork.value = null
+        _ppiRenderer.value = null
+        _radarControls.value = RadarControls()
+        commandClient?.close()
+        commandClient = null
         emulator?.stop()
         emulator = null
         _isEmulatorMode.value = false
@@ -175,6 +196,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        commandClient?.close()
         emulator?.stop()
     }
 }

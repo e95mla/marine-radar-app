@@ -4,7 +4,27 @@ En fristående Android-app (Kotlin + Jetpack Compose) som ansluter direkt
 till en Furuno DRS4W ("1st Watch Wireless Radar") via dess eget WiFi-nät,
 gör radar-discovery, tar emot spoke-data över UDP och ritar upp en
 roterande PPI-radarbild. Ingen server eller Raspberry Pi behövs — allt
-körs i appen. Appen har även en inbyggd **Felsökning**-flik med
+körs i appen.
+
+## Nyheter: kontroller, bättre rendering, avsluta-knapp
+
+- **Bitmap-baserad PPI-rendering** (`PpiRenderer.kt`) — snabbare och
+  fixar tidigare visuella artefakter (den stora gröna "diamanten").
+  Ritar nu en tunn radiell linje per spoke direkt in i en delad bitmap,
+  istället för tusentals enskilda cirklar per frame.
+- **Kommandokanal mot radarn** (`RadarCommandClient.kt`), porterad från
+  `command.rs`/`report.rs`: login-handshake + riktiga kommandon för
+  **Range (+/-), Gain, Sea clutter, Rain clutter och Standby/Transmit**,
+  med Auto-lägen. Kontrollpanel längst ner på Radar-fliken.
+  ⚠️ TCP-login-porten (antagen = 10000/`BASE_PORT`) är INTE bekräftad
+  mot riktig hårdvara — bara själva handskaknings-BYTEFORMATET är
+  verifierat. Justera `RadarCommandClient.LOGIN_PORT` om det visar sig
+  fel mot din radar.
+- **Emulatorn stödjer nu också kommandokanalen** — testa Range/Gain/
+  Sea/Rain/Standby-Transmit helt lokalt innan du är vid radarn.
+- **Avsluta-knapp** (✕) längst upp, stänger appen helt.
+
+ Appen har även en inbyggd **Felsökning**-flik med
 liveloggning av all UDP-trafik, hex-dump per paket, portskanning och
 delning/export av loggen.
 
