@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.example.marineradar.debug.FileLogger
+import com.example.marineradar.debug.LogExport
 import com.example.marineradar.debug.PacketLogEntry
 import com.example.marineradar.debug.PacketLogger
 import com.example.marineradar.network.RadarPassiveScanner
@@ -31,8 +32,18 @@ fun DebugScreen(
     modifier: Modifier = Modifier
 ) {
     var subTab by remember { mutableStateOf(0) }
+    val context = LocalContext.current
 
     Column(modifier = modifier.fillMaxSize()) {
+        Button(
+            onClick = { LogExport.shareFullReport(context) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text("📄 Exportera ALLT (applogg + paket + krasch) som en fil")
+        }
+
         TabRow(selectedTabIndex = subTab) {
             Tab(selected = subTab == 0, onClick = { subTab = 0 }, text = { Text("Paket") })
             Tab(selected = subTab == 1, onClick = { subTab = 1 }, text = { Text("Applogg") })

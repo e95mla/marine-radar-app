@@ -208,6 +208,59 @@ Om du vill gräva ännu djupare (t.ex. lägga till styrning av gain/range
 från appen, eller riktig ARPA-målspårning) kan `command.rs` och
 `settings.rs` (som du redan delat) användas för det i nästa steg.
 
+## Nytt: trolig grundorsak hittad + emulator + samlad logg-export
+
+Din senaste felsökningsrunda visade att **även 20 sekunders passiv
+lyssning på 41 portar hörde noll paket** – trots att våra egna
+discovery-paket bevisligen skickas helt korrekt (bekräftat i dina
+skärmdumpar, byte-för-byte rätt). Det pekar starkt mot att paketen
+aldrig når radarn: sannolikt skickade vi till fel **broadcast-adress**
+eftersom vi antog `/16`-nätmask (`172.31.255.255`), men telefonens
+faktiska DHCP-lease på radarns nät kan mycket väl ha en annan mask
+(t.ex. `/24`), vilket gör den adressen fel för just det nätet.
+
+**Fixat:**
+- `NetworkDiagnostics.kt` (ny) läser ut telefonens FAKTISKA lokala
+  IP + nätmask på radarns WiFi och räknar ut rätt riktad
+  broadcast-adress för den – loggas nu tydligt i Applogg direkt vid
+  anslutning (`NetworkDiagnostics: lokal IP=... → beräknad broadcast=...`).
+- Discovery skickar nu till **flera** broadcast-mål samtidigt: den
+  beräknade rätta adressen, `172.31.255.255` (gamla antagandet) och
+  `255.255.255.255` ("limited broadcast", kräver ingen känd nätmask
+  alls och bör alltid nå det lokala nätet oavsett).
+- Samma fix i portskannern.
+
+**Testa igen och kolla särskilt** raden `NetworkDiagnostics: lokal
+IP=...` i Applogg – om nätmasken visar sig vara t.ex. `/24` har vi
+bekräftat grundorsaken.
+
+### Emulatorläge (testa utan att vara nära radarn)
+
+Ny knapp på anslutningsskärmen: **"🧪 Testa med emulator"**. Den
+startar en lokal simulator (`FurunoRadarEmulator.kt`) som pratar
+EXAKT samma binära protokoll som en riktig DRS4W, men över
+loopback (127.0.0.1) – ingen WiFi eller radar behövs. Den svarar på
+discovery precis som riktig hårdvara (modellnamn "DRS4W-EMU" så det
+syns att det är simulerat) och strömmar syntetiska spoke-frames
+(kodade med samma RLE-format som riktiga radarn) med en roterande
+"target"-blip och en fast "kustlinje"-båge, så PPI-bilden faktiskt
+visar något.
+
+Det här testar HELA kedjan – discovery, UDP-mottagning, header-
+parsning, RLE-avkodning, PPI-rendering – utom själva
+radiosändningen/WiFi-delen. Om emulatorn ger en fin roterande bild
+men den riktiga radarn inte gör det, vet vi att felet sitter i
+nätverks-/anslutningslagret (broadcast/mask-problemet ovan är en
+stark kandidat), inte i avkodningslogiken.
+
+### Samlad logg-export
+
+Ny knapp överst i Felsökning: **"📄 Exportera ALLT"**. Slår ihop
+applogg (alla sessioner) + paketlogg (nuvarande + tidigare sparad) +
+ev. kraschrapport + enhetsinfo till EN textfil och öppnar delnings-
+dialogen – välj t.ex. "Spara till Filer" för att ladda ner den, eller
+dela direkt hit i chatten.
+
 ## Nätverksdetaljer (bekräftade från Furunos dokumentation)
 
 - Subnät: `172.31.0.0/16`

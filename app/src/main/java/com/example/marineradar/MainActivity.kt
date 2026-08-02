@@ -104,6 +104,10 @@ fun RadarScreen(viewModel: RadarViewModel) {
                     Button(onClick = { viewModel.connect(ssid, password) }) {
                         Text("Anslut")
                     }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { viewModel.connectEmulator() }) {
+                        Text("🧪 Testa med emulator (ingen radar behövs)")
+                    }
                     if (state is RadarAppState.Error) {
                         Spacer(Modifier.height(12.dp))
                         Text(state.message, color = MaterialTheme.colorScheme.error)
@@ -119,12 +123,24 @@ fun RadarScreen(viewModel: RadarViewModel) {
             is RadarAppState.DiscoveringRadar -> StatusScreen("Söker efter radar …")
 
             is RadarAppState.Streaming -> {
+                val isEmulator by viewModel.isEmulatorMode.collectAsState()
                 Column(Modifier.fillMaxSize()) {
-                    Text(
-                        text = "Ansluten${state.model?.let { " – $it" } ?: ""}",
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.labelMedium
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
+                                if (isEmulator) "  🧪 EMULATOR (simulerad data)" else "",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        TextButton(onClick = { viewModel.reset() }) {
+                            Text("Koppla från")
+                        }
+                    }
                     PpiView(
                         spokeBuffer = spokeBuffer,
                         modifier = Modifier.weight(1f)

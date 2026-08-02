@@ -32,7 +32,7 @@ data class RadarInfo(
  * protokollet (porterat från mayara-servers `src/lib/brand/furuno/`).
  * Ingen gissning längre för dessa delar – se [FurunoProtocol].
  */
-class RadarUdpClient(private val network: Network) {
+class RadarUdpClient(private val network: Network?) {
 
     /**
      * Skickar de tre discovery-paketen (beacon-fråga, modell-fråga,
@@ -41,11 +41,20 @@ class RadarUdpClient(private val network: Network) {
      * flera paket (beacon-rapport OCH modell-rapport separat) – vi
      * fortsätter lyssna tills vi antingen fått modell-rapporten (170 byte,
      * ger oss modellnamn+serienr) eller tiden tar slut.
+     *
+     * [overrideTargets]: om satt, används dessa mål istället för de
+     * automatiskt beräknade broadcast-adresserna – används av
+     * emulatorläget för att skicka till 127.0.0.1 istället för att
+     * broadcasta på ett riktigt nätverk.
      */
-    fun discover(timeoutMs: Int = 8000) = callbackFlow<RadarInfo> {
+    fun discover(timeoutMs: Int = 8000, overrideTargets: List<String>? = null) = callbackFlow<RadarInfo> {
+        network?.let { NetworkDiagnostics.logInterfaceDetails(it) }
+        val broadcastTargets = overrideTargets
+            ?: network?.let { NetworkDiagnostics.broadcastTargets(it) }
+            ?: listOf("127.0.0.1")
         FileLogger.log(
             "INFO",
-            "RadarUdpClient: discovery mot ${FurunoProtocol.BROADCAST_IP}:${FurunoProtocol.BEACON_PORT}"
+            "RadarUdpClient: discovery mot port ${FurunoProtocol.BEACON_PORT}, broadcast-mål: $broadcastTargets"
         )
 
         val socket = try {
@@ -54,28 +63,33 @@ class RadarUdpClient(private val network: Network) {
                 bind(InetSocketAddress(0))
                 broadcast = true
                 soTimeout = 1000
-            }.also { network.bindSocket(it) }
+            }.also { network?.bindSocket(it) }
         } catch (e: Exception) {
             FileLogger.log("ERROR", "RadarUdpClient: kunde inte skapa discovery-socket", e)
             close(e)
             return@callbackFlow
         }
 
-        val target = InetAddress.getByName(FurunoProtocol.BROADCAST_IP)
-
         fun sendPacket(name: String, bytes: ByteArray) {
-            socket.send(DatagramPacket(bytes, bytes.size, target, FurunoProtocol.BEACON_PORT))
-            PacketLogger.log(
-                PacketLogEntry(
-                    timestampMs = System.currentTimeMillis(),
-                    direction = PacketLogEntry.Direction.TX,
-                    remoteHost = "${FurunoProtocol.BROADCAST_IP} ($name)",
-                    remotePort = FurunoProtocol.BEACON_PORT,
-                    localPort = socket.localPort,
-                    length = bytes.size,
-                    data = bytes
-                )
-            )
+            for (targetIp in broadcastTargets) {
+                try {
+                    val target = InetAddress.getByName(targetIp)
+                    socket.send(DatagramPacket(bytes, bytes.size, target, FurunoProtocol.BEACON_PORT))
+                    PacketLogger.log(
+                        PacketLogEntry(
+                            timestampMs = System.currentTimeMillis(),
+                            direction = PacketLogEntry.Direction.TX,
+                            remoteHost = "$targetIp ($name)",
+                            remotePort = FurunoProtocol.BEACON_PORT,
+                            localPort = socket.localPort,
+                            length = bytes.size,
+                            data = bytes
+                        )
+                    )
+                } catch (e: Exception) {
+                    FileLogger.log("WARN", "RadarUdpClient: kunde inte skicka $name till $targetIp: ${e.message}")
+                }
+            }
         }
 
         try {
@@ -185,7 +199,7 @@ class RadarUdpClient(private val network: Network) {
                 bind(InetSocketAddress(FurunoProtocol.DATA_PORT))
                 soTimeout = 2000
             }
-            network.bindSocket(socket)
+            network?.bindSocket(socket)
 
             val buf = ByteArray(8192)
             while (scope.isActive) {
@@ -209,7 +223,7 @@ class RadarUdpClient(private val network: Network) {
         try {
             val group = InetAddress.getByName(FurunoProtocol.SPOKE_MULTICAST_IP)
             socket = MulticastSocket(FurunoProtocol.DATA_PORT)
-            network.bindSocket(socket)
+            network?.bindSocket(socket)
             val netIf = findWifiInterface()
             if (netIf != null) {
                 socket.joinGroup(InetSocketAddress(group, FurunoProtocol.DATA_PORT), netIf)

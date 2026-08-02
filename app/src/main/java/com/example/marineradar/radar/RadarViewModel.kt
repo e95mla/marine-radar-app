@@ -5,6 +5,7 @@ import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.marineradar.debug.FileLogger
+import com.example.marineradar.network.FurunoRadarEmulator
 import com.example.marineradar.network.RadarUdpClient
 import com.example.marineradar.network.RadarWifiManager
 import com.example.marineradar.network.WifiConnectionState
@@ -50,6 +51,34 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _connectedNetwork = MutableStateFlow<Network?>(null)
     val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
+
+    private var emulator: FurunoRadarEmulator? = null
+    private val _isEmulatorMode = MutableStateFlow(false)
+    val isEmulatorMode: StateFlow<Boolean> = _isEmulatorMode.asStateFlow()
+
+    /**
+     * Startar en lokal simulator som pratar exakt samma protokoll som en
+     * riktig DRS4W, men över loopback (127.0.0.1) – för att kunna testa
+     * hela appens pipeline (discovery → spoke-avkodning → PPI-rendering)
+     * utan att vara i närheten av den riktiga radarn.
+     */
+    fun connectEmulator() {
+        FileLogger.log("INFO", "$TAG: Startar emulatorläge (simulerad radar, ingen riktig hårdvara)")
+        _isEmulatorMode.value = true
+        _appState.value = RadarAppState.DiscoveringRadar
+
+        val em = FurunoRadarEmulator()
+        emulator = em
+        em.start(viewModelScope)
+
+        // Ge emulatorn en liten stund att hinna binda sina lyssnarsocklar
+        // innan vi börjar fråga den, annars kan första discovery-frågan
+        // hinna skickas innan servern är redo.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(300)
+            startRadarSession(RadarUdpClient(null))
+        }
+    }
 
     fun connect(ssid: String, password: String) {
         settings.save(ssid, password)
@@ -139,5 +168,13 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     fun reset() {
         _appState.value = RadarAppState.Disconnected
         _connectedNetwork.value = null
+        emulator?.stop()
+        emulator = null
+        _isEmulatorMode.value = false
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        emulator?.stop()
     }
 }

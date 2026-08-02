@@ -42,12 +42,13 @@ class RadarPortScanner(private val network: Network) {
     }
 
     fun scan(
-        broadcastAddress: String = RadarProtocolConstants.DISCOVERY_BROADCAST,
+        broadcastAddresses: List<String>? = null,
         ports: List<Int> = DEFAULT_CANDIDATE_PORTS,
         listenMillisPerPort: Int = 800
     ) = callbackFlow<ScanResult> {
-        val target = InetAddress.getByName(broadcastAddress)
-        val queryBytes = RadarProtocolConstants.N96_QUERY.toByteArray()
+        val targets = (broadcastAddresses ?: NetworkDiagnostics.broadcastTargets(network))
+            .mapNotNull { runCatching { InetAddress.getByName(it) }.getOrNull() }
+        val n96Bytes = RadarProtocolConstants.N96_QUERY.toByteArray()
 
         for (port in ports) {
             var responders = 0
@@ -60,7 +61,31 @@ class RadarPortScanner(private val network: Network) {
             network.bindSocket(socket)
 
             try {
-                socket.send(DatagramPacket(queryBytes, queryBytes.size, target, port))
+                for (target in targets) {
+                    // Skicka både den gamla NMEA-gissningen OCH det verifierade
+                    // binära modell-paketet (se FurunoProtocol) – ifall radarn
+                    // råkar svara på fler ställen än vi tror.
+                    socket.send(DatagramPacket(n96Bytes, n96Bytes.size, target, port))
+                    socket.send(
+                        DatagramPacket(
+                            FurunoProtocol.REQUEST_MODEL_PACKET,
+                            FurunoProtocol.REQUEST_MODEL_PACKET.size,
+                            target,
+                            port
+                        )
+                    )
+                    PacketLogger.log(
+                        PacketLogEntry(
+                            timestampMs = System.currentTimeMillis(),
+                            direction = PacketLogEntry.Direction.TX,
+                            remoteHost = "${target.hostAddress} (scan)",
+                            remotePort = port,
+                            localPort = socket.localPort,
+                            length = FurunoProtocol.REQUEST_MODEL_PACKET.size,
+                            data = FurunoProtocol.REQUEST_MODEL_PACKET
+                        )
+                    )
+                }
 
                 val deadline = System.currentTimeMillis() + listenMillisPerPort
                 val buf = ByteArray(2048)
