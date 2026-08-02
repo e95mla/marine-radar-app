@@ -105,6 +105,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startSpokeListener(udpClient: RadarUdpClient) {
+        val decoder = FurunoSpokeDecoder() // en instans per session – encoding 2/3 är delta-kodat
         viewModelScope.launch {
             udpClient.listenForSpokes()
                 .catch { e ->
@@ -115,13 +116,16 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .collect { raw ->
                     try {
-                        val spoke = SpokeDecoder.decode(raw) ?: return@collect
-                        val index = ((spoke.angle / (2 * Math.PI)) * ANGLE_STEPS)
-                            .toInt()
-                            .coerceIn(0, ANGLE_STEPS - 1)
+                        val spokes = decoder.decodeFrame(raw)
+                        if (spokes.isEmpty()) return@collect
 
                         val updated = _spokeBuffer.value.copyOf()
-                        updated[index] = spoke.intensities
+                        for (spoke in spokes) {
+                            val index = ((spoke.angle / (2 * Math.PI)) * ANGLE_STEPS)
+                                .toInt()
+                                .coerceIn(0, ANGLE_STEPS - 1)
+                            updated[index] = spoke.intensities
+                        }
                         _spokeBuffer.value = updated
                     } catch (e: Exception) {
                         // Ett enskilt trasigt/oväntat paket ska aldrig krascha

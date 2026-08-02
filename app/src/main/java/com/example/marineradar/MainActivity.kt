@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.marineradar.network.RadarPassiveScanner
 import com.example.marineradar.network.RadarPortScanner
 import com.example.marineradar.radar.RadarAppState
 import com.example.marineradar.radar.RadarViewModel
@@ -69,6 +70,7 @@ fun RadarScreen(viewModel: RadarViewModel) {
             if (tab == 1) {
                 DebugScreen(
                     portScanner = network?.let { RadarPortScanner(it) },
+                    passiveScanner = network?.let { RadarPassiveScanner(it) },
                     modifier = Modifier.weight(1f)
                 )
                 return@Column

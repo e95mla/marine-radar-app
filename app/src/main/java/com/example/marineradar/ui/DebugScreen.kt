@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -18,6 +19,7 @@ import androidx.core.content.FileProvider
 import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.debug.PacketLogEntry
 import com.example.marineradar.debug.PacketLogger
+import com.example.marineradar.network.RadarPassiveScanner
 import com.example.marineradar.network.RadarPortScanner
 import kotlinx.coroutines.launch
 import java.io.File
@@ -25,6 +27,7 @@ import java.io.File
 @Composable
 fun DebugScreen(
     portScanner: RadarPortScanner?,
+    passiveScanner: RadarPassiveScanner?,
     modifier: Modifier = Modifier
 ) {
     var subTab by remember { mutableStateOf(0) }
@@ -37,7 +40,7 @@ fun DebugScreen(
         }
 
         when (subTab) {
-            0 -> PacketLogTab(portScanner, Modifier.weight(1f))
+            0 -> PacketLogTab(portScanner, passiveScanner, Modifier.weight(1f))
             1 -> AppLogTab(Modifier.weight(1f))
             2 -> CrashLogTab(Modifier.weight(1f))
         }
@@ -45,7 +48,7 @@ fun DebugScreen(
 }
 
 @Composable
-private fun PacketLogTab(portScanner: RadarPortScanner?, modifier: Modifier) {
+private fun PacketLogTab(portScanner: RadarPortScanner?, passiveScanner: RadarPassiveScanner?, modifier: Modifier) {
     val context = LocalContext.current
     val entries by PacketLogger.entries.collectAsState()
     var selected by remember { mutableStateOf<PacketLogEntry?>(null) }
@@ -54,7 +57,9 @@ private fun PacketLogTab(portScanner: RadarPortScanner?, modifier: Modifier) {
 
     Column(modifier = modifier.padding(8.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
@@ -62,20 +67,40 @@ private fun PacketLogTab(portScanner: RadarPortScanner?, modifier: Modifier) {
                 onClick = {
                     val scanner = portScanner ?: return@Button
                     scope.launch {
-                        scanStatus = "Skannar portar …"
+                        scanStatus = "Skickar \$N96-fråga till kandidatportar …"
                         try {
                             var found = 0
                             scanner.scan().collect { result ->
                                 if (result.respondersFound > 0) found++
                             }
-                            scanStatus = "Klar. Portar med svar: $found (se loggen nedan)"
+                            scanStatus = "Aktiv skanning klar. Portar med svar: $found (se loggen nedan)"
                         } catch (e: Exception) {
                             FileLogger.log("ERROR", "Portskanning misslyckades", e)
                             scanStatus = "Skanning avbröts: ${e.message}"
                         }
                     }
                 }
-            ) { Text("Skanna portar") }
+            ) { Text("Aktiv skanning") }
+
+            Button(
+                enabled = passiveScanner != null && scanStatus == null,
+                onClick = {
+                    val scanner = passiveScanner ?: return@Button
+                    scope.launch {
+                        scanStatus = "Lyssnar passivt i 20s på brett portspann + multicast …"
+                        try {
+                            scanner.passiveScan(20_000).collect { summary ->
+                                scanStatus = "Passiv skanning klar. Lyssnade på ${summary.portsListened} " +
+                                    "portar + ${summary.multicastGroupsJoined} multicast-grupper, " +
+                                    "hörde ${summary.packetsHeard} paket (se loggen nedan)"
+                            }
+                        } catch (e: Exception) {
+                            FileLogger.log("ERROR", "Passiv skanning misslyckades", e)
+                            scanStatus = "Skanning avbröts: ${e.message}"
+                        }
+                    }
+                }
+            ) { Text("Passiv skanning (20s)") }
 
             OutlinedButton(onClick = { PacketLogger.clear() }) {
                 Text("Rensa")

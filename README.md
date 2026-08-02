@@ -109,6 +109,105 @@ Koden innehåller en **rimlig placeholder** (se `TODO`-kommentarer i
 4. Testa igen mot din riktiga radar och jämför PPI-bilden med den
    officiella iOS-appen.
 
+## Nytt: Vad vi lärt oss från Mayaras källkod
+
+Mayara-servern definierar alla exakta multicast-adresser/portar per
+märke i filen `src/lib/brand/furuno/protocol.rs` i deras repo (bekräftat
+via deras egen `docs/capturing-traffic.md`), men den filens exakta
+innehåll har jag inte kunnat läsa direkt här. Det vi däremot vet
+säkert från deras dokumentation:
+
+- **Radarn sänder discovery-beacons proaktivt** – till skillnad från
+  vår tidigare modell (skicka en `$N96`-fråga och vänta på svar)
+  verkar Furuno-radarn prata av sig själv, kontinuerligt, utan att bli
+  tillfrågad. Det är troligen därför vår aktiva fråga inte fick svar.
+- **Både broadcast OCH multicast används.** Vår ursprungliga kod
+  lyssnade bara på broadcast.
+- Radarn kan landa i `172.31.0.0/16` (bekräftat, Furuno-specifikt) —
+  det stämmer med vad du redan ser i loggen (WiFi ansluter fint).
+
+### Två skanningsverktyg i appen nu
+
+**Aktiv skanning** (som innan) – skickar `$N96`-frågan till en lista
+kandidatportar och väntar på svar.
+
+**Passiv skanning (ny!)** – lyssnar i 20 sekunder på ett brett spann av
+portar OCH på flera kandidat-multicast-grupper *samtidigt*, utan att
+skicka något alls. Eftersom radarn enligt Mayara pratar av sig själv är
+detta troligen den mer lovande vägen. Kör den, vänta 20 sekunder, och
+kolla sedan **Paket**-loggen för vad som kom in.
+
+### Om ingetdera ger napp
+
+1. **Testa längre passiv skanning** – radarns beacon-intervall kan vara
+   längre än 20s. Säg till om du vill att jag höjer standardtiden.
+2. **Hämta `protocol.rs` själv** – om du (eller en vän) har tillgång
+   till en dator: `git clone https://github.com/MarineYachtRadar/mayara-server`
+   och öppna `src/lib/brand/furuno/protocol.rs` — där står exakt adress
+   och port som facit. Klistra in innehållet här i chatten så
+   uppdaterar jag appen med de exakta värdena direkt.
+3. **Kör själva Mayara-servern** en gång (även utan Raspberry Pi – den
+   funkar på Windows/macOS/Linux, se ENDUSER.md i deras repo) mot din
+   radar från en vanlig dator som tillfälligt ansluter till DRS4W:s
+   WiFi. Terminalutskriften när den upptäcker radarn avslöjar troligen
+   exakt adress/port i klartext.
+4. **Wireshark-fångst** enligt deras `docs/capturing-traffic.md` – kräver
+   en WiFi-adapter i monitor-läge, mer omständligt men helt definitivt.
+
+## Status: verifierat protokoll inlagt (från riktig källkod)
+
+Tack vare att du klonade och delade `protocol.rs`, `command.rs`, `mod.rs`
+och `settings.rs` från mayara-server har vi nu **verifierade, exakta**
+protokolldetaljer istället för gissningar:
+
+- **Discovery är ett rått binärt protokoll**, INTE NMEA-text som vi
+  först trodde. Tre fasta binära paket skickas som UDP-broadcast till
+  `172.31.255.255:10010` (`REQUEST_BEACON_PACKET`, `REQUEST_MODEL_PACKET`,
+  `ANNOUNCE_CLIENT_PACKET`), och radarn svarar med en 170-byte
+  modell-rapport som innehåller modellnamn + serienummer i klartext.
+- **Spoke-data** går på port `10024`, antingen via multicast
+  (`239.255.0.2`) eller broadcast (`172.31.255.255`) — appen lyssnar nu
+  på båda samtidigt.
+- **Spoke-frame-headern** (16 byte) är helt kartlagd bitvis (se
+  `SpokeDecoder.kt`) — vi validerar `packet_type == 0x02` och läser ut
+  metadata (range, encoding-läge, spoke-count) korrekt.
+
+Allt detta är implementerat i appen nu (`FurunoProtocol.kt`,
+`RadarUdpClient.kt`, `SpokeDecoder.kt`).
+
+### Vad som FORTFARANDE saknas
+
+~~Den exakta algoritmen för att packa upp pixeldatan~~ **UPPDATERING:
+klar!** Du delade `report.rs`, och nu är den fullständiga, verifierade
+avkodningsalgoritmen porterad rakt av till Kotlin
+(`SpokeDecoder.kt` → klassen `FurunoSpokeDecoder`):
+
+- Alla fyra encoding-lägen (0/1/2/3), inklusive delta-kodning mot
+  föregående spoke för lägen 2/3
+- Korrekt header-parsning (sweep-count, sweep-len, vinkel, range)
+- Samma "stretch"-logik och gammakurva för lågeffekt-radarer (DRS4W)
+  som originalet, för att svaga ekon syns tydligt
+
+**Medvetna förenklingar** för v1 (kan läggas till senare om det behövs):
+- Ingen Tile-format (bara NXT-modeller använder det, inte DRS4W)
+- Ingen dual-range (DRS4W har bara en range)
+- Ingen Doppler/Target Analyzer-färgläggning (DRS4W saknar funktionen)
+- Enklare display-mappning istället för hela legend/palette-systemet
+
+### Testa det vi har nu
+
+Just nu bör hela kedjan fungera: discovery → hitta radarn → ta emot
+spoke-data → avkoda → rita PPI-bild. Anslut igen och se om du faktiskt
+får upp en radarbild! Om något fortfarande är fel, skicka gärna:
+- **Felsökning → Applogg** (visar `SpokeDecoder: frame #...`-rader med
+  sweepCount/encoding/range för varje mottagen frame — superanvändbart
+  för att se om vi tolkar rätt)
+- **Felsökning → Paket** exporterad som text
+
+Om du vill gräva ännu djupare (t.ex. lägga till styrning av gain/range
+från appen, eller riktig ARPA-målspårning) kan `command.rs` och
+`settings.rs` (som du redan delat) användas för det i nästa steg.
+
 ## Nätverksdetaljer (bekräftade från Furunos dokumentation)
 
 - Subnät: `172.31.0.0/16`
@@ -117,6 +216,7 @@ Koden innehåller en **rimlig placeholder** (se `TODO`-kommentarer i
   parallellt med den officiella iOS-appen under testning
 
 ## Nästa steg / förbättringar
+
 
 - Lägg till kontroller för sändning (STBY/TX), range, gain, sea/rain
   clutter.
