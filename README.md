@@ -24,6 +24,38 @@ körs i appen.
   Sea/Rain/Standby-Transmit helt lokalt innan du är vid radarn.
 - **Avsluta-knapp** (✕) längst upp, stänger appen helt.
 
+### Rättat: kommandon som inte gjorde något
+
+Reglagen svarade inte alls tidigare. Loggen visade
+`kunde inte skicka kommando: null` – det där tomma meddelandet är en
+signatur för `NetworkOnMainThreadException`: Slider/Switch-callbacks i
+Compose körs på huvudtråden, och att skriva till en socket direkt
+därifrån är förbjudet på Android. Alla kommandoanrop körs nu på en
+bakgrundstråd (`Dispatchers.IO`) via ViewModel.
+
+Samtidigt fixades en relaterad robusthetsbugg: coroutine-cancellation
+avbryter INTE blockerande socket-anrop (`ServerSocket.accept()`,
+`DatagramSocket.receive()`). Om appen kopplade om (t.ex. efter ett
+fel) kunde emulatorns gamla sockets bli kvar bundna till sina portar
+och krocka med en ny anslutning ("login-server kraschade"). Alla
+emulator-sockets stängs nu explicit i `stop()`, och både `connect()`
+och `connectEmulator()` nollställer alltid en ev. gammal session
+ordentligt innan en ny startas.
+
+### Rättat: tomrum överst i radarbilden + zoom/helskärm
+
+PPI-bilden visades tidigare i fel storlek/position med mycket
+onödigt tomrum. Fixat genom att låta bilden alltid ta upp en perfekt
+kvadrat centrerad i tillgängligt utrymme (`Modifier.aspectRatio(1f)`
+istället för `fillMaxSize` + oklar `ContentScale`-hantering).
+
+Nytt:
+- **Pinch-to-zoom + panorering** direkt på radarbilden
+- **Dubbeltryck** för att återställa zoom/position
+- **Helskärmsknapp** (⤢ uppe till höger på radarbilden) — döljer
+  flikar/kontrollpanel helt och visar bara radarbilden; tryck ⤡ för
+  att gå tillbaka
+
  Appen har även en inbyggd **Felsökning**-flik med
 liveloggning av all UDP-trafik, hex-dump per paket, portskanning och
 delning/export av loggen.
@@ -280,6 +312,60 @@ applogg (alla sessioner) + paketlogg (nuvarande + tidigare sparad) +
 ev. kraschrapport + enhetsinfo till EN textfil och öppnar delnings-
 dialogen – välj t.ex. "Spara till Filer" för att ladda ner den, eller
 dela direkt hit i chatten.
+
+## Nytt: kartöverlägg (Google Maps eller OpenStreetMap)
+
+Ny 🗺️-brytare i statusraden på Radar-fliken slår på ett kartöverlägg —
+radarbilden visas då korrekt positionerad och roterad ovanpå en
+riktig karta, utifrån telefonens GPS-position och kompasskurs (DRS4W
+själv skickar ingen position — det är bara en radarsensor, positionen
+måste komma från telefonen).
+
+**Två valbara kartleverantörer** (växla med knapparna överst på kartan):
+
+- **OpenStreetMap** (standardval) — **helt gratis, ingen API-nyckel
+  behövs, fungerar direkt.** Implementerat via `osmdroid`.
+- **Google Maps** — kräver en gratis API-nyckel (se nedan), men har
+  bl.a. satellitvy.
+
+### Skaffa en Google Maps API-nyckel (valfritt, bara om du vill använda den)
+
+1. Gå till [Google Cloud Console](https://console.cloud.google.com/)
+   → skapa ett nytt projekt (gratis)
+2. Sök upp **"Maps SDK for Android"** under APIs & Services → Library
+   → tryck **Enable**
+3. Gå till **APIs & Services → Credentials** → **Create credentials →
+   API key**
+4. (Rekommenderat) Begränsa nyckeln till **Android-appar** och lägg in
+   ditt paketnamn (`com.example.marineradar`) + SHA-1-fingeravtryck
+5. Kopiera nyckeln
+
+**Lägg in nyckeln (välj ett sätt):**
+- **GitHub Actions (rekommenderat, för din vanliga bygg-väg):** gå till
+  ditt repo → **Settings → Secrets and variables → Actions → New
+  repository secret** → namn `MAPS_API_KEY`, värde = din nyckel.
+  Workflowen skickar redan med den automatiskt vid varje bygge.
+- **Lokalt i Android Studio:** lägg till raden
+  `MAPS_API_KEY=din-nyckel-här` i `local.properties` (skapas automatiskt
+  av Android Studio, redan gitignorad).
+
+Saknas nyckeln byggs appen ändå fint — Google Maps-kartan visas bara
+tom/grå. OpenStreetMap kräver som sagt ingen nyckel alls.
+
+### Hur det fungerar tekniskt
+
+- **Positionering**: `BoatLocationProvider.kt` läser telefonens GPS
+  (`LocationManager`) + kompass (`TYPE_ROTATION_VECTOR`-sensorn).
+- **Google Maps**: radarbilden ritas via maps-composes `GroundOverlay`
+  – en inbyggd funktion för just det här (bild + position + storlek i
+  meter + rotation).
+- **OpenStreetMap**: osmdroid har ingen inbyggd motsvarighet till
+  GroundOverlay, så `OsmRadarMapView.kt` implementerar det manuellt via
+  ett eget `Overlay` som räknar ut skärmposition/skala från kartans
+  `Projection` varje ritning.
+- Båda är oberoende av vald kartleverantör och kan enkelt bytas ut om
+  du vill lägga till fler (t.ex. MapLibre/OpenFreeMap) — se
+  `MapProviderType.kt` och `RadarMapContainer.kt`.
 
 ## Nätverksdetaljer (bekräftade från Furunos dokumentation)
 

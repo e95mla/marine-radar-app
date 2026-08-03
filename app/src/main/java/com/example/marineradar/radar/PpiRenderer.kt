@@ -49,9 +49,15 @@ class PpiRenderer(private val sizePx: Int = 720) {
         clear()
     }
 
-    /** Rensar bilden och ritar om avståndsringar + centrummarkör. */
+    /**
+     * Rensar bilden och ritar om avståndsringar + centrummarkör.
+     * Bakgrunden är TRANSPARENT (inte svart) med flit – det gör att
+     * samma bitmap fungerar både i den vanliga PPI-vyn (som har svart
+     * bakgrund bakom, se [com.example.marineradar.ui.PpiView]) OCH som
+     * genomskinligt kartöverlägg ovanpå Google Maps/OpenStreetMap.
+     */
     fun clear() {
-        canvas.drawColor(Color.BLACK)
+        canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         for (i in 1..4) {
             canvas.drawCircle(center, center, maxRadius * i / 4, ringPaint)
         }

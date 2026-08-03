@@ -5,6 +5,8 @@ import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.marineradar.debug.FileLogger
+import com.example.marineradar.location.BoatLocationProvider
+import com.example.marineradar.map.MapProviderType
 import com.example.marineradar.network.FurunoRadarEmulator
 import com.example.marineradar.network.RadarCommandClient
 import com.example.marineradar.network.RadarControls
@@ -60,6 +62,39 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     private var commandClient: RadarCommandClient? = null
 
+    // -------------------------------------------------------------------
+    // Karta + positionering
+    // -------------------------------------------------------------------
+    private var locationProvider: BoatLocationProvider? = null
+
+    private val _showMapOverlay = MutableStateFlow(false)
+    val showMapOverlay: StateFlow<Boolean> = _showMapOverlay.asStateFlow()
+
+    private val _mapProvider = MutableStateFlow(MapProviderType.OPENSTREETMAP)
+    val mapProvider: StateFlow<MapProviderType> = _mapProvider.asStateFlow()
+
+    private val _boatLocation = MutableStateFlow<com.google.android.gms.maps.model.LatLng?>(null)
+    val boatLocation: StateFlow<com.google.android.gms.maps.model.LatLng?> = _boatLocation.asStateFlow()
+
+    private val _headingDegrees = MutableStateFlow(0f)
+    val headingDegrees: StateFlow<Float> = _headingDegrees.asStateFlow()
+
+    fun setMapOverlayEnabled(enabled: Boolean) {
+        _showMapOverlay.value = enabled
+        if (enabled && locationProvider == null) {
+            FileLogger.log("INFO", "$TAG: Kartöverlägg aktiverat, startar GPS/kompass")
+            val provider = BoatLocationProvider(getApplication())
+            locationProvider = provider
+            provider.start()
+            viewModelScope.launch { provider.location.collect { _boatLocation.value = it } }
+            viewModelScope.launch { provider.headingDegrees.collect { _headingDegrees.value = it } }
+        }
+    }
+
+    fun setMapProvider(provider: MapProviderType) {
+        _mapProvider.value = provider
+    }
+
     /**
      * Startar en lokal simulator som pratar exakt samma protokoll som en
      * riktig DRS4W, men över loopback (127.0.0.1) – för att kunna testa
@@ -67,6 +102,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
      * → kommandokanal) utan att vara i närheten av den riktiga radarn.
      */
     fun connectEmulator() {
+        if (_appState.value !is RadarAppState.Disconnected && _appState.value !is RadarAppState.Error) {
+            FileLogger.log("WARN", "$TAG: connectEmulator() ignorerad, redan ansluten/ansluter")
+            return
+        }
+        reset() // säkerställ att ev. gammal emulator/kommandoklient är helt nedstängd först
         FileLogger.log("INFO", "$TAG: Startar emulatorläge (simulerad radar, ingen riktig hårdvara)")
         _isEmulatorMode.value = true
         _appState.value = RadarAppState.DiscoveringRadar
@@ -84,6 +124,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connect(ssid: String, password: String) {
+        if (_appState.value !is RadarAppState.Disconnected && _appState.value !is RadarAppState.Error) {
+            FileLogger.log("WARN", "$TAG: connect() ignorerad, redan ansluten/ansluter")
+            return
+        }
+        reset()
         settings.save(ssid, password)
         FileLogger.log("INFO", "$TAG: Ansluter till WiFi '$ssid'")
         _appState.value = RadarAppState.ConnectingWifi
@@ -176,11 +221,22 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPower(transmit: Boolean) = commandClient?.setPower(transmit)
-    fun stepRange(up: Boolean) = commandClient?.stepRange(up)
-    fun setGain(auto: Boolean, value: Int) = commandClient?.setGain(auto, value)
-    fun setSea(auto: Boolean, value: Int) = commandClient?.setSea(auto, value)
-    fun setRain(auto: Boolean, value: Int) = commandClient?.setRain(auto, value)
+    fun setPower(transmit: Boolean) = launchCommand { commandClient?.setPower(transmit) }
+    fun stepRange(up: Boolean) = launchCommand { commandClient?.stepRange(up) }
+    fun setGain(auto: Boolean, value: Int) = launchCommand { commandClient?.setGain(auto, value) }
+    fun setSea(auto: Boolean, value: Int) = launchCommand { commandClient?.setSea(auto, value) }
+    fun setRain(auto: Boolean, value: Int) = launchCommand { commandClient?.setRain(auto, value) }
+
+    /**
+     * Kör ett kommando på bakgrundstråd. VIKTIGT: Compose-callbacks (t.ex.
+     * Slider.onValueChange) körs på huvudtråden, och att skriva till en
+     * socket direkt därifrån kastar NetworkOnMainThreadException – som
+     * (förrädiskt nog) har `message == null`, vilket är precis vad som
+     * loggades som "kunde inte skicka kommando: null" tidigare.
+     */
+    private fun launchCommand(block: () -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { block() }
+    }
 
     fun reset() {
         _appState.value = RadarAppState.Disconnected
@@ -192,11 +248,16 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         emulator?.stop()
         emulator = null
         _isEmulatorMode.value = false
+        locationProvider?.stop()
+        locationProvider = null
+        _showMapOverlay.value = false
+        _boatLocation.value = null
     }
 
     override fun onCleared() {
         super.onCleared()
         commandClient?.close()
         emulator?.stop()
+        locationProvider?.stop()
     }
 }

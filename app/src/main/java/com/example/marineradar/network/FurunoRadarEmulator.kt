@@ -36,6 +36,17 @@ class FurunoRadarEmulator {
 
     private var job: Job? = null
 
+    // Blockerande socket-anrop (accept()/receive()) avbryts INTE av
+    // job.cancel() – coroutine-cancellation kontrolleras bara vid
+    // suspension points, inte mitt i ett synkront OS-anrop. Utan att
+    // explicit stänga dessa sockets i stop() blir de kvar bundna till
+    // sina portar, vilket orsakade "login-server kraschade" (port redan
+    // upptagen) vid en efterföljande återanslutning.
+    @Volatile private var discoverySocket: DatagramSocket? = null
+    @Volatile private var spokeSocket: DatagramSocket? = null
+    @Volatile private var loginServerSocket: java.net.ServerSocket? = null
+    @Volatile private var dataServerSocket: java.net.ServerSocket? = null
+
     /** Enkel mutable state som kommandoservern uppdaterar och spoke-generatorn läser (t.ex. valt range). */
     private object EmulatorState {
         @Volatile var transmit = true
@@ -61,6 +72,14 @@ class FurunoRadarEmulator {
 
     fun stop() {
         FileLogger.log("INFO", "FurunoRadarEmulator: stoppar")
+        // Stäng alla blockerande sockets EXPLICIT innan job.cancel() –
+        // annars kan t.ex. ett ServerSocket.accept() eller
+        // DatagramSocket.receive() fortsätta ligga och blockera i
+        // bakgrunden på sin port även efter att coroutinen "avbrutits".
+        try { discoverySocket?.close() } catch (_: Exception) { }
+        try { spokeSocket?.close() } catch (_: Exception) { }
+        try { loginServerSocket?.close() } catch (_: Exception) { }
+        try { dataServerSocket?.close() } catch (_: Exception) { }
         job?.cancel()
         job = null
     }
@@ -77,6 +96,7 @@ class FurunoRadarEmulator {
                 bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), FurunoProtocol.BEACON_PORT))
                 soTimeout = 1000
             }
+            discoverySocket = socket
             FileLogger.log("INFO", "FurunoRadarEmulator: lyssnar på discovery, 127.0.0.1:${FurunoProtocol.BEACON_PORT}")
 
             val buf = ByteArray(2048)
@@ -127,6 +147,7 @@ class FurunoRadarEmulator {
         var socket: DatagramSocket? = null
         try {
             socket = DatagramSocket(null)
+            spokeSocket = socket
             val target = InetSocketAddress(InetAddress.getByName("127.0.0.1"), FurunoProtocol.DATA_PORT)
             FileLogger.log("INFO", "FurunoRadarEmulator: skickar syntetiska spokes till 127.0.0.1:${FurunoProtocol.DATA_PORT}")
 
@@ -250,6 +271,7 @@ class FurunoRadarEmulator {
                 reuseAddress = true
                 bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), RadarCommandClient.LOGIN_PORT))
             }
+            loginServerSocket = server
             FileLogger.log("INFO", "FurunoRadarEmulator: login-server på port ${RadarCommandClient.LOGIN_PORT}")
 
             while (kotlinx.coroutines.currentCoroutineContext().isActive) {
@@ -294,6 +316,7 @@ class FurunoRadarEmulator {
                 reuseAddress = true
                 bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), RadarCommandClient.LOGIN_PORT + 1))
             }
+            dataServerSocket = server
             FileLogger.log("INFO", "FurunoRadarEmulator: kommandokanal på port ${RadarCommandClient.LOGIN_PORT + 1}")
 
             while (kotlinx.coroutines.currentCoroutineContext().isActive) {

@@ -20,6 +20,7 @@ import com.example.marineradar.radar.RadarViewModel
 import com.example.marineradar.ui.DebugScreen
 import com.example.marineradar.ui.PpiView
 import com.example.marineradar.ui.RadarControlPanel
+import com.example.marineradar.ui.RadarMapContainer
 
 class MainActivity : ComponentActivity() {
 
@@ -57,12 +58,33 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val network by viewModel.connectedNetwork.collectAsState()
     val radarControls by viewModel.radarControls.collectAsState()
     val isEmulator by viewModel.isEmulatorMode.collectAsState()
+    val showMapOverlay by viewModel.showMapOverlay.collectAsState()
+    val mapProvider by viewModel.mapProvider.collectAsState()
+    val boatLocation by viewModel.boatLocation.collectAsState()
+    val headingDegrees by viewModel.headingDegrees.collectAsState()
 
     var ssid by remember { mutableStateOf(viewModel.settings.getSsid()) }
     var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
     var tab by remember { mutableStateOf(0) }
+    var fullscreen by remember { mutableStateOf(false) }
+
+    // Om anslutningen tappas medan vi är i helskärm, hoppa tillbaka till
+    // normalvy så användaren ser felmeddelandet istället för en tom skärm.
+    LaunchedEffect(appState) {
+        if (appState !is RadarAppState.Streaming) fullscreen = false
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
+        if (fullscreen && appState is RadarAppState.Streaming) {
+            PpiView(
+                renderer = ppiRenderer,
+                modifier = Modifier.fillMaxSize(),
+                isFullscreen = true,
+                onToggleFullscreen = { fullscreen = false }
+            )
+            return@Surface
+        }
+
         Column(Modifier.fillMaxSize()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
@@ -141,16 +163,36 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             Text(
                                 text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
                                     if (isEmulator) "  🧪 EMULATOR (simulerad data)" else "",
-                                style = MaterialTheme.typography.labelMedium
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text("🗺️", style = MaterialTheme.typography.labelSmall)
+                            Switch(
+                                checked = showMapOverlay,
+                                onCheckedChange = { viewModel.setMapOverlayEnabled(it) }
                             )
                             TextButton(onClick = { viewModel.reset() }) {
                                 Text("Koppla från")
                             }
                         }
-                        PpiView(
-                            renderer = ppiRenderer,
-                            modifier = Modifier.weight(1f)
-                        )
+                        if (showMapOverlay) {
+                            RadarMapContainer(
+                                provider = mapProvider,
+                                onProviderChange = { viewModel.setMapProvider(it) },
+                                renderer = ppiRenderer,
+                                boatLocation = boatLocation,
+                                headingDegrees = headingDegrees,
+                                rangeMeters = radarControls.rangeMeters,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            PpiView(
+                                renderer = ppiRenderer,
+                                modifier = Modifier.weight(1f),
+                                isFullscreen = false,
+                                onToggleFullscreen = { fullscreen = true }
+                            )
+                        }
                         RadarControlPanel(
                             controls = radarControls,
                             onPowerToggle = { viewModel.setPower(it) },
