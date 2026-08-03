@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -23,7 +25,7 @@ android {
         //    gitignorad som standard av Android Studio)
         // Saknas nyckeln byggs appen ändå (bara Google Maps-kartan visas
         // inte) – OpenStreetMap-alternativet kräver ingen nyckel alls.
-        val localProps = java.util.Properties().apply {
+        val localProps = Properties().apply {
             val f = rootProject.file("local.properties")
             if (f.exists()) load(f.inputStream())
         }
