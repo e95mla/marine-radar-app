@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,8 +33,20 @@ jobs:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: gradle assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Rename APK with run number (så varje bygge syns tydligt)
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/marine-radar-${{ github.run_number }}.apk
+
+      - name: Upload APK (artifact, kräver GitHub-inloggning att ladda ner)
         uses: actions/upload-artifact@v4
         with:
           name: marine-radar-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publicera som GitHub Release (enklast att ladda ner på mobil)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: "Senaste bygget (#${{ github.run_number }})"
+          body: "Automatiskt byggd APK från commit ${{ github.sha }}. Ladda ner filen nedan direkt i telefonens webbläsare."
+          files: app/build/outputs/apk/debug/marine-radar-${{ github.run_number }}.apk
+          make_latest: true

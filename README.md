@@ -92,14 +92,21 @@ bygger APK:n åt dig i molnet. Så här gör du:
 4. **Vänta på bygget.** Så fort du pushar startar GitHub Actions
    automatiskt. Gå till fliken **Actions** i ditt repo (i webbläsaren)
    och följ förloppet.
-5. **Hämta APK:n.** När bygget är klart (grön bock), klicka in på
-   körningen → scrolla ner till **Artifacts** → ladda ner
-   `marine-radar-debug-apk`. Det blir en zip med `app-debug.apk` i.
-6. **Installera på telefonen.** Öppna den nedladdade filen i
-   Filhanteraren. Första gången ber Android dig tillåta installation
-   från den appen (t.ex. webbläsaren eller Filer) under
-   Inställningar → Appar → Särskild åtkomst → Installera okända appar.
-   Installera sedan `app-debug.apk`.
+5. **Hämta APK:n – enklast via Releases.** GitHub Actions-artefakter
+   (fliken "Artifacts") kräver att du är inloggad och packar upp en zip,
+   vilket ofta strular i mobila webbläsare ("artefakten laddas ej ner").
+   Använd istället **Releases**-fliken:
+   - Gå till `github.com/<ditt-användarnamn>/<repo-namn>/releases/latest`
+   - Där ligger senaste bygget som en vanlig **direkt nedladdningsbar
+     `.apk`-fil** (ingen zip, ingen inloggning behövs) — tryck bara på
+     filen under "Assets"
+   - Länken uppdateras automatiskt till senaste bygget varje gång du
+     pushar ny kod, så du kan bokmärka den
+   - (Artifacts-fliken finns kvar som backup om du hellre vill det)
+6. **Installera på telefonen.** Öppna den nedladdade `.apk`-filen.
+   Första gången ber Android dig tillåta installation från den appen
+   (t.ex. webbläsaren) under Inställningar → Appar → Särskild åtkomst →
+   Installera okända appar.
 
 Varje gång du ändrar koden och pushar igen (`git add -A && git commit
 -m "..." && git push`) byggs en ny APK automatiskt.
