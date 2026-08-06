@@ -179,6 +179,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             RadarMapContainer(
                                 provider = mapProvider,
                                 onProviderChange = { viewModel.setMapProvider(it) },
+                                onClose = { viewModel.setMapOverlayEnabled(false) },
                                 renderer = ppiRenderer,
                                 boatLocation = boatLocation,
                                 headingDegrees = headingDegrees,

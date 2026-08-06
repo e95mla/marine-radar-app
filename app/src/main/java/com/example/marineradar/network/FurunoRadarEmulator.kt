@@ -11,6 +11,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
@@ -210,28 +211,71 @@ class FurunoRadarEmulator {
         return header + body.toByteArray()
     }
 
+    /**
+     * Genererar en syntetisk intensitetsprofil, nu:
+     * - Utspridd över HELA räckvidden (inte klumpad nära centrum som
+     *   tidigare) – kustlinjen ligger i mellandistans, target-blippen
+     *   närmare.
+     * - Faktiskt PÅVERKAD av Gain/Sea/Rain-kontrollerna, så det syns en
+     *   verklig skillnad i bilden när man drar i reglagen:
+     *   - Gain skalar den generella styrkan på alla ekon.
+     *   - Sea (clutter) styr mängd/styrka på brus nära centrum (precis
+     *     som riktig sjöbrus-dämpning – högre värde = mindre brus).
+     *   - Rain (clutter) styr ett diffust "regnmoln" i en sektor – högre
+     *     värde = mindre synligt regnbrus.
+     */
     private fun generateSweep(sweepLen: Int, angle: Int, targetAngle: Int): IntArray {
         val values = IntArray(sweepLen)
+        val gainFactor = 0.25 + (EmulatorState.gainValue / 100.0) * 1.5 // 0.25x .. 1.75x
 
-        if (angle in 3000..3399) {
-            for (i in 180 until minOf(230, sweepLen)) {
-                values[i] = 160
-            }
+        fun setEcho(index: Int, baseStrength: Int) {
+            if (index < 0 || index >= sweepLen) return
+            val scaled = (baseStrength * gainFactor).roundToInt().coerceIn(0, 254) and 0xFE
+            if (scaled > values[index]) values[index] = scaled
         }
 
+        // Kustlinje-liknande båge i mellandistans (55–68% av räckvidden)
+        if (angle in 3000..3399) {
+            val start = (sweepLen * 0.55).toInt()
+            val end = (sweepLen * 0.68).toInt()
+            for (i in start until end) setEcho(i, 170)
+        }
+
+        // Roterande target-blip närmare (25–30% av räckvidden)
         val angleDiff = minOf(
             Math.floorMod(angle - targetAngle, FurunoProtocol.SPOKES_PER_REVOLUTION),
             Math.floorMod(targetAngle - angle, FurunoProtocol.SPOKES_PER_REVOLUTION)
         )
-        if (angleDiff <= 5) {
-            for (i in 60 until minOf(70, sweepLen)) {
-                values[i] = 220
+        if (angleDiff <= 6) {
+            val start = (sweepLen * 0.25).toInt()
+            val end = (sweepLen * 0.30).toInt()
+            for (i in start until end) setEcho(i, 230)
+        }
+
+        // Sjöbrus (sea clutter) nära centrum (0–15% av räckvidden) –
+        // mindre brus ju högre Sea-värde är satt.
+        val seaSuppression = EmulatorState.seaValue / 100.0
+        val seaNoiseChance = (25 * (1.0 - seaSuppression)).toInt().coerceAtLeast(1)
+        val seaRange = (sweepLen * 0.15).toInt().coerceAtLeast(1)
+        for (i in 0 until seaRange) {
+            if (Random.nextInt(100) < seaNoiseChance) {
+                setEcho(i, (60 * (1.0 - seaSuppression * 0.7)).roundToInt().coerceAtLeast(20))
             }
         }
 
-        if (Random.nextInt(100) < 5) {
-            val i = Random.nextInt(minOf(40, sweepLen))
-            values[i] = 40
+        // Regnmoln (rain clutter) i en bred, diffus sektor på mellan-
+        // distans (35–75% av räckvidden) – mindre synligt ju högre
+        // Rain-värde är satt.
+        val rainSuppression = EmulatorState.rainValue / 100.0
+        if (angle in 5000..5900) {
+            val start = (sweepLen * 0.35).toInt()
+            val end = (sweepLen * 0.75).toInt()
+            val rainChance = (35 * (1.0 - rainSuppression)).toInt().coerceAtLeast(1)
+            for (i in start until end) {
+                if (Random.nextInt(100) < rainChance) {
+                    setEcho(i, (50 * (1.0 - rainSuppression * 0.6)).roundToInt().coerceAtLeast(10))
+                }
+            }
         }
 
         return values
