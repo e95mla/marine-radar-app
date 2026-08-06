@@ -70,8 +70,15 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val _showMapOverlay = MutableStateFlow(false)
     val showMapOverlay: StateFlow<Boolean> = _showMapOverlay.asStateFlow()
 
-    private val _mapProvider = MutableStateFlow(MapProviderType.OPENSTREETMAP)
+    private val _mapProvider = MutableStateFlow(
+        settings.getMapProviderName()?.let { name ->
+            runCatching { MapProviderType.valueOf(name) }.getOrNull()
+        } ?: MapProviderType.OPENSTREETMAP
+    )
     val mapProvider: StateFlow<MapProviderType> = _mapProvider.asStateFlow()
+
+    private val _radarOpacity = MutableStateFlow(settings.getRadarOpacity())
+    val radarOpacity: StateFlow<Float> = _radarOpacity.asStateFlow()
 
     private val _boatLocation = MutableStateFlow<com.google.android.gms.maps.model.LatLng?>(null)
     val boatLocation: StateFlow<com.google.android.gms.maps.model.LatLng?> = _boatLocation.asStateFlow()
@@ -93,6 +100,13 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMapProvider(provider: MapProviderType) {
         _mapProvider.value = provider
+        settings.saveMapProviderName(provider.name)
+    }
+
+    fun setRadarOpacity(value: Float) {
+        val clamped = value.coerceIn(0f, 1f)
+        _radarOpacity.value = clamped
+        settings.saveRadarOpacity(clamped)
     }
 
     /**

@@ -41,6 +41,7 @@ fun GoogleMapRadarView(
     boatLocation: LatLng?,
     headingDegrees: Float,
     rangeMeters: Int,
+    opacity: Float = 0.6f,
     modifier: Modifier = Modifier
 ) {
     var frame by remember { mutableIntStateOf(0) }
@@ -77,7 +78,7 @@ fun GoogleMapRadarView(
                         ),
                         image = BitmapDescriptorFactory.fromBitmap(renderer.bitmap),
                         bearing = headingDegrees,
-                        transparency = 0.05f
+                        transparency = (1f - opacity).coerceIn(0f, 1f)
                     )
                 }
             }

@@ -56,12 +56,13 @@ fun OsmRadarMapView(
     boatLocation: LatLng?,
     headingDegrees: Float,
     rangeMeters: Int,
+    opacity: Float = 0.6f,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
 
     val radarOverlay = remember { RadarOverlay() }
-    radarOverlay.update(renderer, boatLocation, headingDegrees, rangeMeters)
+    radarOverlay.update(renderer, boatLocation, headingDegrees, rangeMeters, opacity)
 
     val mapView = remember {
         // Beskrivande User-Agent istället för det generiska paketnamnet
@@ -117,13 +118,15 @@ private class RadarOverlay : Overlay() {
     private var boatLocation: LatLng? = null
     private var headingDegrees: Float = 0f
     private var rangeMeters: Int = 1000
+    private var opacity: Float = 0.6f
     private val paint = Paint().apply { isAntiAlias = true }
 
-    fun update(renderer: PpiRenderer?, boatLocation: LatLng?, headingDegrees: Float, rangeMeters: Int) {
+    fun update(renderer: PpiRenderer?, boatLocation: LatLng?, headingDegrees: Float, rangeMeters: Int, opacity: Float) {
         this.renderer = renderer
         this.boatLocation = boatLocation
         this.headingDegrees = headingDegrees
         this.rangeMeters = rangeMeters
+        this.opacity = opacity
     }
 
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
@@ -148,6 +151,7 @@ private class RadarOverlay : Overlay() {
 
             val scale = (radiusPx * 2f) / bmp.width
 
+            paint.alpha = (opacity.coerceIn(0f, 1f) * 255).toInt()
             canvas.save()
             canvas.translate(centerPoint.x.toFloat(), centerPoint.y.toFloat())
             canvas.rotate(headingDegrees)

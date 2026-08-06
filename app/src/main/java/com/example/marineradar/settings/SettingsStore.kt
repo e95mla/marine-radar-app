@@ -18,10 +18,13 @@ class SettingsStore(context: Context) {
     companion object {
         private const val KEY_SSID = "wifi_ssid"
         private const val KEY_PASSWORD = "wifi_password"
+        private const val KEY_MAP_PROVIDER = "map_provider"
+        private const val KEY_RADAR_OPACITY = "radar_opacity"
 
         // Förifyllda standardvärden tills användaren sparar egna.
         const val DEFAULT_SSID = "DRS4W05619771"
         const val DEFAULT_PASSWORD = "16720hhb"
+        const val DEFAULT_RADAR_OPACITY = 0.6f
     }
 
     fun getSsid(): String = prefs.getString(KEY_SSID, DEFAULT_SSID) ?: DEFAULT_SSID
@@ -33,5 +36,18 @@ class SettingsStore(context: Context) {
             .putString(KEY_SSID, ssid)
             .putString(KEY_PASSWORD, password)
             .apply()
+    }
+
+    /** Namnet ("OPENSTREETMAP"/"GOOGLE_MAPS") på senast valda kartleverantör, eller null om inget sparat än. */
+    fun getMapProviderName(): String? = prefs.getString(KEY_MAP_PROVIDER, null)
+
+    fun saveMapProviderName(name: String) {
+        prefs.edit().putString(KEY_MAP_PROVIDER, name).apply()
+    }
+
+    fun getRadarOpacity(): Float = prefs.getFloat(KEY_RADAR_OPACITY, DEFAULT_RADAR_OPACITY)
+
+    fun saveRadarOpacity(value: Float) {
+        prefs.edit().putFloat(KEY_RADAR_OPACITY, value).apply()
     }
 }

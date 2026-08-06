@@ -7,19 +7,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.example.marineradar.network.RadarPassiveScanner
 import com.example.marineradar.network.RadarPortScanner
 import com.example.marineradar.radar.RadarAppState
 import com.example.marineradar.radar.RadarViewModel
 import com.example.marineradar.ui.DebugScreen
+import com.example.marineradar.ui.ExpandedPanel
+import com.example.marineradar.ui.ExpandableBottomBar
 import com.example.marineradar.ui.PpiView
-import com.example.marineradar.ui.RadarControlPanel
 import com.example.marineradar.ui.RadarMapContainer
 
 class MainActivity : ComponentActivity() {
@@ -60,6 +63,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val isEmulator by viewModel.isEmulatorMode.collectAsState()
     val showMapOverlay by viewModel.showMapOverlay.collectAsState()
     val mapProvider by viewModel.mapProvider.collectAsState()
+    val mapOpacity by viewModel.radarOpacity.collectAsState()
     val boatLocation by viewModel.boatLocation.collectAsState()
     val headingDegrees by viewModel.headingDegrees.collectAsState()
 
@@ -67,36 +71,29 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
     var tab by remember { mutableStateOf(0) }
     var fullscreen by remember { mutableStateOf(false) }
+    var expandedPanel by remember { mutableStateOf(ExpandedPanel.NONE) }
 
-    // Om anslutningen tappas medan vi är i helskärm, hoppa tillbaka till
-    // normalvy så användaren ser felmeddelandet istället för en tom skärm.
+    // Om anslutningen tappas, hoppa tillbaka till normalvy så användaren
+    // ser felmeddelandet istället för en tom skärm.
     LaunchedEffect(appState) {
         if (appState !is RadarAppState.Streaming) fullscreen = false
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (fullscreen && appState is RadarAppState.Streaming) {
-            PpiView(
-                renderer = ppiRenderer,
-                modifier = Modifier.fillMaxSize(),
-                isFullscreen = true,
-                onToggleFullscreen = { fullscreen = false }
-            )
-            return@Surface
-        }
-
         Column(Modifier.fillMaxSize()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Felsökning") })
-                }
-                TextButton(onClick = onExit) {
-                    Text("✕ Avsluta", color = MaterialTheme.colorScheme.error)
+            if (!fullscreen) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
+                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Felsökning") })
+                    }
+                    TextButton(onClick = onExit) {
+                        Text("✕ Avsluta", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
 
-            if (tab == 1) {
+            if (tab == 1 && !fullscreen) {
                 DebugScreen(
                     portScanner = network?.let { RadarPortScanner(it) },
                     passiveScanner = network?.let { RadarPassiveScanner(it) },
@@ -152,59 +149,104 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                 is RadarAppState.DiscoveringRadar -> StatusScreen("Söker efter radar …")
 
                 is RadarAppState.Streaming -> {
-                    Column(Modifier.fillMaxSize()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
-                                    if (isEmulator) "  🧪 EMULATOR (simulerad data)" else "",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text("🗺️", style = MaterialTheme.typography.labelSmall)
-                            Switch(
-                                checked = showMapOverlay,
-                                onCheckedChange = { viewModel.setMapOverlayEnabled(it) }
-                            )
-                            TextButton(onClick = { viewModel.reset() }) {
-                                Text("Koppla från")
-                            }
-                        }
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        // Kärninnehållet fyller alltid hela ytan, oavsett
+                        // helskärm eller ej – karta eller klassisk PPI-vy.
                         if (showMapOverlay) {
                             RadarMapContainer(
                                 provider = mapProvider,
-                                onProviderChange = { viewModel.setMapProvider(it) },
-                                onClose = { viewModel.setMapOverlayEnabled(false) },
                                 renderer = ppiRenderer,
                                 boatLocation = boatLocation,
                                 headingDegrees = headingDegrees,
                                 rangeMeters = radarControls.rangeMeters,
-                                modifier = Modifier.weight(1f)
+                                opacity = mapOpacity,
+                                modifier = Modifier.fillMaxSize()
                             )
                         } else {
                             PpiView(
                                 renderer = ppiRenderer,
-                                modifier = Modifier.weight(1f),
-                                isFullscreen = false,
-                                onToggleFullscreen = { fullscreen = true }
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
-                        RadarControlPanel(
-                            controls = radarControls,
-                            onPowerToggle = { viewModel.setPower(it) },
+
+                        if (!fullscreen) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.TopCenter)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
+                                        if (isEmulator) "  🧪 EMULATOR" else "",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text("🗺️", style = MaterialTheme.typography.labelSmall)
+                                Switch(
+                                    checked = showMapOverlay,
+                                    onCheckedChange = {
+                                        viewModel.setMapOverlayEnabled(it)
+                                        if (!it && expandedPanel == ExpandedPanel.MAP) {
+                                            expandedPanel = ExpandedPanel.NONE
+                                        }
+                                    }
+                                )
+                                TextButton(onClick = { viewModel.reset() }) {
+                                    Text("Koppla från", color = Color.White)
+                                }
+                            }
+                        }
+
+                        // Helskärmsknapp – flyter alltid ovanpå innehållet,
+                        // fungerar likadant oavsett karta eller PPI-vy.
+                        IconButtonLike(
+                            text = if (fullscreen) "⤡" else "⤢",
+                            onClick = { fullscreen = !fullscreen },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = if (fullscreen) 8.dp else 52.dp, end = 8.dp)
+                        )
+
+                        // Räckvidd + zoom + expanderbara paneler – ALLTID
+                        // synligt längst ner, även i helskärm.
+                        ExpandableBottomBar(
+                            showMapButton = showMapOverlay,
+                            expandedPanel = expandedPanel,
+                            onExpandedPanelChange = { expandedPanel = it },
+                            rangeMeters = radarControls.rangeMeters,
                             onRangeStep = { viewModel.stepRange(it) },
+                            radarControls = radarControls,
+                            onPowerToggle = { viewModel.setPower(it) },
                             onGainChange = { auto, value -> viewModel.setGain(auto, value) },
                             onSeaChange = { auto, value -> viewModel.setSea(auto, value) },
-                            onRainChange = { auto, value -> viewModel.setRain(auto, value) }
+                            onRainChange = { auto, value -> viewModel.setRain(auto, value) },
+                            mapProvider = mapProvider,
+                            onMapProviderChange = { viewModel.setMapProvider(it) },
+                            mapOpacity = mapOpacity,
+                            onMapOpacityChange = { viewModel.setRadarOpacity(it) },
+                            modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun IconButtonLike(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = 0.6f),
+        shape = MaterialTheme.shapes.small
+    ) {
+        TextButton(onClick = onClick) {
+            Text(text, color = Color.White, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
