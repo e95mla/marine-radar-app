@@ -80,6 +80,9 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val _radarOpacity = MutableStateFlow(settings.getRadarOpacity())
     val radarOpacity: StateFlow<Float> = _radarOpacity.asStateFlow()
 
+    private val _mapDarkStyle = MutableStateFlow(settings.getMapDarkStyle())
+    val mapDarkStyle: StateFlow<Boolean> = _mapDarkStyle.asStateFlow()
+
     private val _boatLocation = MutableStateFlow<com.google.android.gms.maps.model.LatLng?>(null)
     val boatLocation: StateFlow<com.google.android.gms.maps.model.LatLng?> = _boatLocation.asStateFlow()
 
@@ -107,6 +110,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         val clamped = value.coerceIn(0f, 1f)
         _radarOpacity.value = clamped
         settings.saveRadarOpacity(clamped)
+    }
+
+    fun setMapDarkStyle(dark: Boolean) {
+        _mapDarkStyle.value = dark
+        settings.saveMapDarkStyle(dark)
     }
 
     /**

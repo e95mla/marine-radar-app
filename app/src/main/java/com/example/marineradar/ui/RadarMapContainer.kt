@@ -22,6 +22,7 @@ fun RadarMapContainer(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float,
+    darkStyle: Boolean,
     modifier: Modifier = Modifier
 ) {
     when (provider) {
@@ -31,6 +32,7 @@ fun RadarMapContainer(
             headingDegrees = headingDegrees,
             rangeMeters = rangeMeters,
             opacity = opacity,
+            darkStyle = darkStyle,
             modifier = modifier.fillMaxSize()
         )
         MapProviderType.GOOGLE_MAPS -> GoogleMapRadarView(
@@ -39,6 +41,7 @@ fun RadarMapContainer(
             headingDegrees = headingDegrees,
             rangeMeters = rangeMeters,
             opacity = opacity,
+            darkStyle = darkStyle,
             modifier = modifier.fillMaxSize()
         )
     }

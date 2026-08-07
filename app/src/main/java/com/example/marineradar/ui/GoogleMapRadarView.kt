@@ -42,6 +42,7 @@ fun GoogleMapRadarView(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float = 0.6f,
+    darkStyle: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var frame by remember { mutableIntStateOf(0) }
@@ -67,7 +68,7 @@ fun GoogleMapRadarView(
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
-            properties = MapProperties(mapType = MapType.HYBRID)
+            properties = MapProperties(mapType = if (darkStyle) MapType.HYBRID else MapType.NORMAL)
         ) {
             if (renderer != null && boatLocation != null) {
                 key(frame) {

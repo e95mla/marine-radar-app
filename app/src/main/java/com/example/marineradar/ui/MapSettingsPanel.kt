@@ -31,6 +31,8 @@ fun MapSettingsPanel(
     onProviderChange: (MapProviderType) -> Unit,
     opacity: Float,
     onOpacityChange: (Float) -> Unit,
+    darkStyle: Boolean,
+    onDarkStyleChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -46,6 +48,22 @@ fun MapSettingsPanel(
                     Text(type.displayName, style = MaterialTheme.typography.labelSmall)
                 }
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Kartstil", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.height(4.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = darkStyle,
+                onClick = { onDarkStyleChange(true) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+            ) { Text("Mörk", style = MaterialTheme.typography.labelSmall) }
+            SegmentedButton(
+                selected = !darkStyle,
+                onClick = { onDarkStyleChange(false) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+            ) { Text("Ljus", style = MaterialTheme.typography.labelSmall) }
         }
 
         Spacer(Modifier.height(8.dp))

@@ -42,6 +42,18 @@ private val CARTO_DARK = XYTileSource(
     "© OpenStreetMap contributors © CARTO"
 )
 
+/** Ljusare kartstil, samma leverantör – valbar i Karta-panelen. */
+private val CARTO_LIGHT = XYTileSource(
+    "CartoDBVoyager",
+    0, 19, 256, ".png",
+    arrayOf(
+        "https://a.basemaps.cartocdn.com/rastertiles/voyager/",
+        "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
+        "https://c.basemaps.cartocdn.com/rastertiles/voyager/"
+    ),
+    "© OpenStreetMap contributors © CARTO"
+)
+
 /**
  * OpenStreetMap-baserad karta via osmdroid – helt gratis, ingen
  * API-nyckel behövs. Ritar radarbilden som ett eget [Overlay] som
@@ -57,6 +69,7 @@ fun OsmRadarMapView(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float = 0.6f,
+    darkStyle: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -70,12 +83,21 @@ fun OsmRadarMapView(
         Configuration.getInstance().userAgentValue = "MarineRadarApp/1.0"
         Configuration.getInstance().osmdroidTileCache = context.cacheDir
         MapView(context).apply {
-            setTileSource(CARTO_DARK)
+            setTileSource(if (darkStyle) CARTO_DARK else CARTO_LIGHT)
             setMultiTouchControls(true)
+            // Inbyggda +/- zoomknappar avstängda – de hamnade bakom/
+            // krockade med kontrollpanelen längst ner. Pinch-to-zoom
+            // (setMultiTouchControls ovan) räcker för att zooma.
+            zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(15.0)
             overlays.add(radarOverlay)
             overlays.add(AttributionOverlay())
         }
+    }
+
+    DisposableEffect(darkStyle) {
+        mapView.setTileSource(if (darkStyle) CARTO_DARK else CARTO_LIGHT)
+        onDispose { }
     }
 
     DisposableEffect(boatLocation) {

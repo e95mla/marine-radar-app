@@ -6,15 +6,15 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Divider
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -23,14 +23,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.marineradar.map.MapProviderType
 import com.example.marineradar.network.RadarControls
 
 /**
  * Alltid synlig underdel av radar-skärmen: räckvidd (+/-) syns oavsett
- * vad som är expanderat, samt två knappar som fäller ut respektive
- * inställningspanel ("Karta" och "Kontroller") ovanför den här raden.
- * Bara en panel öppen åt gången för att hålla det städat.
+ * vad som är expanderat, samt två FASTA ikonknappar (48x48dp, ingen
+ * text) som fäller ut respektive inställningspanel. Fast storlek är
+ * medvetet – tidigare textknappar (FilterChip) kunde i sällsynta fall
+ * klämmas ihop till nästan ingen bredd alls, vilket fick texten att
+ * radbrytas tecken för tecken ("K/o/nt/ro/lle/r"). Ikoner utan text kan
+ * inte drabbas av det.
  */
 @Composable
 fun ExpandableBottomBar(
@@ -48,6 +52,8 @@ fun ExpandableBottomBar(
     onMapProviderChange: (MapProviderType) -> Unit,
     mapOpacity: Float,
     onMapOpacityChange: (Float) -> Unit,
+    mapDarkStyle: Boolean,
+    onMapDarkStyleChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -66,7 +72,9 @@ fun ExpandableBottomBar(
                         provider = mapProvider,
                         onProviderChange = onMapProviderChange,
                         opacity = mapOpacity,
-                        onOpacityChange = onMapOpacityChange
+                        onOpacityChange = onMapOpacityChange,
+                        darkStyle = mapDarkStyle,
+                        onDarkStyleChange = onMapDarkStyleChange
                     )
                 }
             }
@@ -93,7 +101,7 @@ fun ExpandableBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -110,30 +118,43 @@ fun ExpandableBottomBar(
 
                 Row {
                     if (showMapButton) {
-                        FilterChip(
+                        SquareIconToggle(
+                            icon = "🗺️",
                             selected = expandedPanel == ExpandedPanel.MAP,
                             onClick = {
                                 onExpandedPanelChange(
                                     if (expandedPanel == ExpandedPanel.MAP) ExpandedPanel.NONE else ExpandedPanel.MAP
                                 )
-                            },
-                            label = { Text("🗺️ Karta") },
-                            colors = FilterChipDefaults.filterChipColors()
+                            }
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    FilterChip(
+                    SquareIconToggle(
+                        icon = "📡",
                         selected = expandedPanel == ExpandedPanel.RADAR,
                         onClick = {
                             onExpandedPanelChange(
                                 if (expandedPanel == ExpandedPanel.RADAR) ExpandedPanel.NONE else ExpandedPanel.RADAR
                             )
-                        },
-                        label = { Text("📡 Kontroller") },
-                        colors = FilterChipDefaults.filterChipColors()
+                        }
                     )
                 }
             }
+        }
+    }
+}
+
+/** Fast 48x48dp-knapp med bara en ikon, ingen text – kan aldrig radbrytas. */
+@Composable
+fun SquareIconToggle(icon: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.size(48.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small,
+        onClick = onClick
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
+            Text(icon, fontSize = 20.sp)
         }
     }
 }

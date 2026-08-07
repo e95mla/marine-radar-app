@@ -20,6 +20,7 @@ class SettingsStore(context: Context) {
         private const val KEY_PASSWORD = "wifi_password"
         private const val KEY_MAP_PROVIDER = "map_provider"
         private const val KEY_RADAR_OPACITY = "radar_opacity"
+        private const val KEY_MAP_DARK_STYLE = "map_dark_style"
 
         // Förifyllda standardvärden tills användaren sparar egna.
         const val DEFAULT_SSID = "DRS4W05619771"
@@ -49,5 +50,12 @@ class SettingsStore(context: Context) {
 
     fun saveRadarOpacity(value: Float) {
         prefs.edit().putFloat(KEY_RADAR_OPACITY, value).apply()
+    }
+
+    /** true = mörk kartstil (standard), false = ljus. */
+    fun getMapDarkStyle(): Boolean = prefs.getBoolean(KEY_MAP_DARK_STYLE, true)
+
+    fun saveMapDarkStyle(dark: Boolean) {
+        prefs.edit().putBoolean(KEY_MAP_DARK_STYLE, dark).apply()
     }
 }

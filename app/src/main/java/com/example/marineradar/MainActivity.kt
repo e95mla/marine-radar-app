@@ -24,6 +24,7 @@ import com.example.marineradar.ui.ExpandedPanel
 import com.example.marineradar.ui.ExpandableBottomBar
 import com.example.marineradar.ui.PpiView
 import com.example.marineradar.ui.RadarMapContainer
+import com.example.marineradar.ui.SquareIconToggle
 
 class MainActivity : ComponentActivity() {
 
@@ -64,6 +65,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val showMapOverlay by viewModel.showMapOverlay.collectAsState()
     val mapProvider by viewModel.mapProvider.collectAsState()
     val mapOpacity by viewModel.radarOpacity.collectAsState()
+    val mapDarkStyle by viewModel.mapDarkStyle.collectAsState()
     val boatLocation by viewModel.boatLocation.collectAsState()
     val headingDegrees by viewModel.headingDegrees.collectAsState()
 
@@ -160,6 +162,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                 headingDegrees = headingDegrees,
                                 rangeMeters = radarControls.rangeMeters,
                                 opacity = mapOpacity,
+                                darkStyle = mapDarkStyle,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
@@ -170,47 +173,68 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                         }
 
                         if (!fullscreen) {
-                            Row(
+                            // Diskret statusindikator: grön prick = riktig
+                            // radar, blå prick = emulator. Ersätter den
+                            // tidigare skrymmande textraden.
+                            Surface(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .align(Alignment.TopCenter)
-                                    .background(Color.Black.copy(alpha = 0.55f))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .align(Alignment.TopStart)
+                                    .padding(8.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                shape = MaterialTheme.shapes.small
                             ) {
-                                Text(
-                                    text = "Ansluten${state.model?.let { " – $it" } ?: ""}" +
-                                        if (isEmulator) "  🧪 EMULATOR" else "",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color.White,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text("🗺️", style = MaterialTheme.typography.labelSmall)
-                                Switch(
-                                    checked = showMapOverlay,
-                                    onCheckedChange = {
-                                        viewModel.setMapOverlayEnabled(it)
-                                        if (!it && expandedPanel == ExpandedPanel.MAP) {
-                                            expandedPanel = ExpandedPanel.NONE
-                                        }
-                                    }
-                                )
-                                TextButton(onClick = { viewModel.reset() }) {
-                                    Text("Koppla från", color = Color.White)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                color = if (isEmulator) Color(0xFF4A90E2) else Color(0xFF4CD964),
+                                                shape = androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        state.model ?: "Radar",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White
+                                    )
                                 }
                             }
                         }
 
-                        // Helskärmsknapp – flyter alltid ovanpå innehållet,
-                        // fungerar likadant oavsett karta eller PPI-vy.
-                        IconButtonLike(
-                            text = if (fullscreen) "⤡" else "⤢",
-                            onClick = { fullscreen = !fullscreen },
+                        Row(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(top = if (fullscreen) 8.dp else 52.dp, end = 8.dp)
-                        )
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (!fullscreen) {
+                                SquareIconToggle(
+                                    icon = "🗺️",
+                                    selected = showMapOverlay,
+                                    onClick = {
+                                        val newValue = !showMapOverlay
+                                        viewModel.setMapOverlayEnabled(newValue)
+                                        if (!newValue && expandedPanel == ExpandedPanel.MAP) {
+                                            expandedPanel = ExpandedPanel.NONE
+                                        }
+                                    }
+                                )
+                                SquareIconToggle(
+                                    icon = "⏏",
+                                    selected = false,
+                                    onClick = { viewModel.reset() }
+                                )
+                            }
+                            SquareIconToggle(
+                                icon = if (fullscreen) "⤡" else "⤢",
+                                selected = false,
+                                onClick = { fullscreen = !fullscreen }
+                            )
+                        }
 
                         // Räckvidd + zoom + expanderbara paneler – ALLTID
                         // synligt längst ner, även i helskärm.
@@ -229,24 +253,13 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             onMapProviderChange = { viewModel.setMapProvider(it) },
                             mapOpacity = mapOpacity,
                             onMapOpacityChange = { viewModel.setRadarOpacity(it) },
+                            mapDarkStyle = mapDarkStyle,
+                            onMapDarkStyleChange = { viewModel.setMapDarkStyle(it) },
                             modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun IconButtonLike(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        color = Color.Black.copy(alpha = 0.6f),
-        shape = MaterialTheme.shapes.small
-    ) {
-        TextButton(onClick = onClick) {
-            Text(text, color = Color.White, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
