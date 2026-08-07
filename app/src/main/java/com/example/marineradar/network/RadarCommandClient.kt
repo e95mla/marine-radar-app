@@ -259,25 +259,80 @@ class RadarCommandClient(private val network: Network? = null) {
         }
     }
 
+    /**
+     * Stega räckvidden ett steg upp/ned i Furunos wire-tabell.
+     *
+     * Wire-indexen är INTE sekventiella (1/16 NM = index 21), så vi stegar i
+     * [FurunoProtocol.WIRE_INDEX_ORDER] som är sorterad efter meter. Tidigare
+     * användes `indexOfFirst { meters >= current }`, vilket returnerade -1 när
+     * radarn stod på största räckvidden och då hoppade tillbaka till minsta –
+     * och vid "-" från minsta hände ingenting alls.
+     */
     fun stepRange(up: Boolean) {
         val order = FurunoProtocol.WIRE_INDEX_ORDER
         val currentMeters = _controls.value.rangeMeters
-        var currentIdx = order.indexOfFirst { (FurunoProtocol.WIRE_INDEX_TO_METERS[it] ?: 0) >= currentMeters }
-        if (currentIdx == -1) currentIdx = 0
+        // Närmaste index till nuvarande räckvidd (robust även om radarn
+        // rapporterar en räckvidd som inte finns exakt i tabellen).
+        val currentIdx = order.indices.minByOrNull { i ->
+            kotlin.math.abs((FurunoProtocol.WIRE_INDEX_TO_METERS[order[i]] ?: 0) - currentMeters)
+        } ?: 0
         val newIdx = (currentIdx + if (up) 1 else -1).coerceIn(0, order.size - 1)
-        sendCommand('S', 0x62, listOf(order[newIdx], 0, 0))
+        if (newIdx == currentIdx) {
+            FileLogger.log(
+                "INFO",
+                "RadarCommandClient: räckvidd redan på ${if (up) "max" else "min"} " +
+                    "(${currentMeters} m) – inget kommando skickat"
+            )
+            return
+        }
+        val wireIndex = order[newIdx]
+        val meters = FurunoProtocol.WIRE_INDEX_TO_METERS[wireIndex] ?: currentMeters
+        FileLogger.log(
+            "INFO",
+            "RadarCommandClient: räckvidd ${currentMeters} m -> ${meters} m " +
+                "(wireIndex=$wireIndex, unit=0/NM, drid=0)"
+        )
+        // Optimistisk lokal uppdatering: DRS4W svarar inte alltid med $N62 på
+        // eget initiativ, och utan detta stod siffran still i UI:t även när
+        // radarn faktiskt bytte räckvidd. Bekräftelsen nedan korrigerar värdet
+        // om radarn valde något annat.
+        _controls.value = _controls.value.copy(rangeMeters = meters)
+        sendCommand('S', 0x62, listOf(wireIndex, 0, 0))
+        verifyAfterSet(0x62, "räckvidd")
     }
 
     fun setGain(auto: Boolean, value: Int) {
+        FileLogger.log("INFO", "RadarCommandClient: sätter gain auto=$auto värde=$value")
+        _controls.value = _controls.value.copy(gainAuto = auto, gainValue = value)
         sendCommand('S', 0x63, listOf(if (auto) 1 else 0, value, 0, 80, 0))
+        verifyAfterSet(0x63, "gain")
     }
 
     fun setSea(auto: Boolean, value: Int) {
+        FileLogger.log("INFO", "RadarCommandClient: sätter sea auto=$auto värde=$value")
+        _controls.value = _controls.value.copy(seaAuto = auto, seaValue = value)
         sendCommand('S', 0x64, listOf(if (auto) 1 else 0, value, 50, 0, 0, 0))
+        verifyAfterSet(0x64, "sea")
     }
 
     fun setRain(auto: Boolean, value: Int) {
+        FileLogger.log("INFO", "RadarCommandClient: sätter rain auto=$auto värde=$value")
+        _controls.value = _controls.value.copy(rainAuto = auto, rainValue = value)
         sendCommand('S', 0x65, listOf(if (auto) 1 else 0, value, 0, 0, 0, 0))
+        verifyAfterSet(0x65, "rain")
+    }
+
+    /**
+     * Fråga radarn om aktuellt värde strax efter ett set-kommando, så att
+     * loggen visar om radarn faktiskt accepterade ändringen (samma mönster som
+     * verifieringen av effektläget).
+     */
+    private fun verifyAfterSet(idHex: Int, label: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            delay(750)
+            FileLogger.log("INFO", "RadarCommandClient: verifierar $label med \$R%02X".format(idHex))
+            sendCommand('R', idHex, emptyList())
+        }
     }
 
     // -------------------------------------------------------------------
@@ -312,15 +367,28 @@ class RadarCommandClient(private val network: Network? = null) {
                 )
             }
             0x62 -> if (numbers.size >= 2) {
+                // Svarsformat: $N62,{wireIndex},{unit},{drid}
                 val wireIndex = numbers[0].toInt()
                 val wireUnit = numbers[1].toInt()
-                if (wireUnit == 0) {
-                    FurunoProtocol.WIRE_INDEX_TO_METERS[wireIndex]?.let { meters ->
-                        _controls.value = _controls.value.copy(rangeMeters = meters)
-                    }
+                val meters = if (wireUnit == 0) FurunoProtocol.WIRE_INDEX_TO_METERS[wireIndex] else null
+                if (meters != null) {
+                    FileLogger.log(
+                        "INFO",
+                        "RadarCommandClient: bekräftad räckvidd=$meters m (wireIndex=$wireIndex)"
+                    )
+                    _controls.value = _controls.value.copy(rangeMeters = meters)
+                } else {
+                    FileLogger.log(
+                        "WARN",
+                        "RadarCommandClient: okänd räckvidd i \$N62 – wireIndex=$wireIndex unit=$wireUnit"
+                    )
                 }
             }
             0x63 -> if (numbers.size >= 2) {
+                FileLogger.log(
+                    "INFO",
+                    "RadarCommandClient: bekräftad gain auto=${numbers[0].toInt() != 0} värde=${numbers[1].toInt()}"
+                )
                 _controls.value = _controls.value.copy(
                     gainAuto = numbers[0].toInt() != 0,
                     gainValue = numbers[1].toInt()
