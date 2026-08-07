@@ -23,7 +23,7 @@ import java.net.Socket
 
 data class RadarControls(
     val connected: Boolean = false,
-    val powerTransmit: Boolean = true,
+    val powerTransmit: Boolean = false,
     val rangeMeters: Int = FurunoProtocol.WIRE_INDEX_TO_METERS[6] ?: 3704,
     val gainAuto: Boolean = true,
     val gainValue: Int = 50,
@@ -122,11 +122,15 @@ class RadarCommandClient(private val network: Network? = null) {
             // $R96 (Modules) är obligatorisk – den identifierar radarmodellen
             // och får radarn att börja rapportera överhuvudtaget.
             sendCommand('R', 0x96, emptyList())
+            sendCommand('R', 0x8E, listOf(0))
+            sendCommand('R', 0x8F, listOf(0))
             sendCommand('R', 0x69, emptyList())
             sendCommand('R', 0x62, emptyList())
             sendCommand('R', 0x63, emptyList())
             sendCommand('R', 0x64, emptyList())
             sendCommand('R', 0x65, emptyList())
+            sendCommand('R', 0x77, emptyList())
+            sendCommand('R', 0xE8, emptyList())
 
             // AliveCheck: mayara skickar $RE3 var 5:e sekund. Utan den
             // stänger radarn kommandokanalen efter ~15 s och spoke-strömmen
@@ -242,7 +246,17 @@ class RadarCommandClient(private val network: Network? = null) {
 
     fun setPower(transmit: Boolean) {
         val status = if (transmit) 2 else 1
+        FileLogger.log(
+            "INFO",
+            "RadarCommandClient: begär ${if (transmit) "TRANSMIT" else "STANDBY"}; " +
+                "wire=\$S69,$status,0,0,60,540,0"
+        )
         sendCommand('S', 0x69, listOf(status, 0, 0, 60, 540, 0))
+        CoroutineScope(Dispatchers.IO).launch {
+            delay(750)
+            FileLogger.log("INFO", "RadarCommandClient: verifierar effektläge med \$R69")
+            sendCommand('R', 0x69, emptyList())
+        }
     }
 
     fun stepRange(up: Boolean) {
@@ -290,7 +304,12 @@ class RadarCommandClient(private val network: Network? = null) {
 
         when (id) {
             0x69 -> if (numbers.isNotEmpty()) {
-                _controls.value = _controls.value.copy(powerTransmit = numbers[0].toInt() == 2)
+                val status = numbers[0].toInt()
+                _controls.value = _controls.value.copy(powerTransmit = status == 2)
+                FileLogger.log(
+                    "INFO",
+                    "RadarCommandClient: bekräftat effektläge=${when (status) { 2 -> "TRANSMIT"; 1 -> "STANDBY"; else -> "OKÄNT($status)" }}"
+                )
             }
             0x62 -> if (numbers.size >= 2) {
                 val wireIndex = numbers[0].toInt()

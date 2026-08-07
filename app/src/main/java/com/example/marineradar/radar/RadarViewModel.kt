@@ -255,6 +255,9 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                         "senaste spoke=$sinceSpoke, kommandokanal=${_radarControls.value.connected}, " +
                         "sändning=${_radarControls.value.powerTransmit}" +
                         when {
+                        !_radarControls.value.powerTransmit ->
+                            " → RADARN ÄR I STANDBY: ingen spoke-data ska komma. Tryck STBY för att begära TX; " +
+                                "loggen ska då visa TX \$S69 och ett bekräftat \$N69-läge"
                             packetCount == 0L ->
                                 " → INGEN UDP-data alls: kontrollera att telefonen sitter på radarns WiFi " +
                                     "och att MulticastLock togs (se RadarUdpClient-raderna ovan)"
@@ -329,6 +332,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setPower(transmit: Boolean) = launchCommand {
+        FileLogger.log(
+            "INFO",
+            "$TAG: användaren begär effektläge ${if (transmit) "TRANSMIT" else "STANDBY"}; " +
+                "klient=${if (commandClient == null) "SAKNAS" else "redo"}"
+        )
         // Delta-avkodningen (encoding 2/3) refererar föregående spoke – när
         // radarn går till standby måste tillståndet nollställas, annars blir
         // första varvet efter uppvaknandet brus.
