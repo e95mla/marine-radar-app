@@ -10,6 +10,7 @@ import com.example.marineradar.map.MapProviderType
 import com.example.marineradar.network.FurunoRadarEmulator
 import com.example.marineradar.network.RadarCommandClient
 import com.example.marineradar.network.RadarControls
+import com.example.marineradar.network.RadarInfo
 import com.example.marineradar.network.RadarUdpClient
 import com.example.marineradar.network.RadarWifiManager
 import com.example.marineradar.network.WifiConnectionState
@@ -20,9 +21,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 
 private const val TAG = "RadarViewModel"
+
+/** Modellnamnet som [FurunoRadarEmulator] rapporterar. */
+private const val EMULATOR_MODEL = "DRS4W-EMU"
 
 sealed class RadarAppState {
     data object Disconnected : RadarAppState()
@@ -139,10 +144,20 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         em.start(viewModelScope)
 
         // Ge emulatorn en liten stund att hinna binda sina lyssnarsocklar
-        // innan vi börjar fråga den.
+        // innan vi börjar prata med den.
         viewModelScope.launch {
             delay(300)
-            startRadarSession(RadarUdpClient(null, getApplication()))
+            // I emulatorläget vet vi redan exakt var "radarn" finns
+            // (127.0.0.1) – vi ska INTE köra discovery, eftersom det
+            // annars broadcastar ut på det riktiga nätverket och letar
+            // efter hårdvara som inte ska vara inblandad.
+            val emulatorInfo = RadarInfo(
+                ipAddress = InetAddress.getByName("127.0.0.1"),
+                model = EMULATOR_MODEL,
+                serialNumber = null,
+                name = EMULATOR_MODEL
+            )
+            startRadarSession(RadarUdpClient(null, getApplication()), knownRadar = emulatorInfo)
         }
     }
 
@@ -182,7 +197,16 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startRadarSession(udpClient: RadarUdpClient) {
+    private fun startRadarSession(udpClient: RadarUdpClient, knownRadar: RadarInfo? = null) {
+        if (knownRadar != null) {
+            // Ingen discovery – vi hoppar direkt till strömning.
+            FileLogger.log("INFO", "$TAG: Hoppar över discovery, känd radar=${knownRadar.model}")
+            _appState.value = RadarAppState.Streaming(knownRadar.model)
+            _ppiRenderer.value = PpiRenderer()
+            startSpokeListener(udpClient)
+            startCommandChannel(knownRadar.ipAddress)
+            return
+        }
         viewModelScope.launch {
             udpClient.discover()
                 .catch { e ->
