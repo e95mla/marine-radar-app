@@ -1,5 +1,6 @@
 package com.example.marineradar.network
 
+import android.net.Network
 import com.example.marineradar.debug.FileLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +43,7 @@ data class RadarControls(
  * riktig DRS4W-hårdvara. Kommandoporten läses ut ur login-svaret som
  * BASE_PORT + offset.
  */
-class RadarCommandClient {
+class RadarCommandClient(private val network: Network? = null) {
 
     companion object {
         /**
@@ -74,6 +75,24 @@ class RadarCommandClient {
     private var aliveCount = 0
     private var reportCount = 0
 
+    /**
+     * Skapar en TCP-socket som är bunden till radarns WiFi-nätverk.
+     *
+     * KRITISKT: utan [Network.bindSocket] router Android trafiken via det
+     * "default"-nätverk som har internet (mobildata/rmnet0), eftersom
+     * radar-WiFi:t saknar NET_CAPABILITY_INTERNET. Symptom: connect-timeout
+     * "from /10.x.x.x" istället för telefonens 172.31-adress.
+     */
+    private fun newBoundSocket(): Socket {
+        val s = Socket()
+        try {
+            network?.bindSocket(s)
+        } catch (e: Exception) {
+            FileLogger.log("WARN", "RadarCommandClient: kunde inte binda socket till radar-nätverket", e)
+        }
+        return s
+    }
+
     private val _controls = MutableStateFlow(RadarControls())
     val controls: StateFlow<RadarControls> = _controls.asStateFlow()
 
@@ -88,7 +107,7 @@ class RadarCommandClient {
             val port = login(radarIp)
             FileLogger.log("INFO", "RadarCommandClient: inloggad mot $radarIp, kommandoport=$port")
 
-            val s = Socket()
+            val s = newBoundSocket()
             FileLogger.log("INFO", "RadarCommandClient: öppnar kommandosocket mot $radarIp:$port")
             s.connect(InetSocketAddress(radarIp, port), 5000)
             // Radarn släpper tysta kontrollsocketar – håll TCP-nivån vid liv också.
@@ -160,9 +179,13 @@ class RadarCommandClient {
     }
 
     private fun login(radarIp: InetAddress): Int {
-        Socket().use { s ->
+        newBoundSocket().use { s ->
             s.connect(InetSocketAddress(radarIp, LOGIN_PORT), 3000)
             s.soTimeout = 3000
+            FileLogger.log(
+                "INFO",
+                "RadarCommandClient: login-socket ansluten från ${s.localAddress?.hostAddress}:${s.localPort}"
+            )
             s.getOutputStream().write(LOGIN_MESSAGE)
             s.getOutputStream().flush()
 
