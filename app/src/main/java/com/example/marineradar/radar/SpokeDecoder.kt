@@ -43,6 +43,16 @@ class FurunoSpokeDecoder {
     private var frameCount = 0
 
     /**
+     * Nollställer delta-tillståndet. Måste anropas när strömmen bryts
+     * (standby, tappad anslutning) – annars delta-avkodas första spoken
+     * efter uppvaknandet mot en gammal buffert och bilden fylls med brus.
+     */
+    fun reset() {
+        prevSpoke = ByteArray(0)
+        frameCount = 0
+    }
+
+    /**
      * Avkodar en hel UDP-frame (kan innehålla flera spokes,
      * `sweep_count` stycken) och returnerar en lista med [Spoke]-objekt.
      */
@@ -215,11 +225,17 @@ class FurunoSpokeDecoder {
                 if (repeat == 0) repeat = FurunoProtocol.ENCODING_3_REPEAT_DEFAULT
 
                 if (b and 0x01 == 0) {
-                    // Kopiera från föregående spoke (delta)
+                    // Kopiera från föregående spoke (delta). VIKTIGT: mayara
+                    // uppdaterar `strength` till det senast kopierade värdet –
+                    // gör vi inte det pekar nästa "upprepa senaste literala
+                    // värdet" på ett gammalt värde, vilket ger radiella streck.
                     repeat(repeat.coerceAtMost(sweepLen - spoke.size + 1)) {
                         val i = spoke.size
                         val s = if (prevSpoke.size > i) prevSpoke[i] else 0
-                        if (spoke.size < sweepLen) spoke.add(s)
+                        if (spoke.size < sweepLen) {
+                            spoke.add(s)
+                            strength = s
+                        }
                     }
                 } else {
                     // Upprepa senaste literala värdet
@@ -269,17 +285,25 @@ class FurunoSpokeDecoder {
     // för lågeffekt-radarer som DRS4W)
     // -------------------------------------------------------------------
 
-    private fun wireToDisplay(raw: Byte): Byte {
-        val value = raw.toInt() and 0xFF
-        if (value == 0) return 0
+    private fun wireToDisplay(raw: Byte): Byte = GAMMA_LUT[raw.toInt() and 0xFF]
 
-        val pixelMax = 254
-        val usable = pixelMax - FurunoProtocol.ECHO_FLOOR
-        // DRS4W är en lågeffekt-radar – använd samma 18:e-rots-gammakurva
-        // som mayara-server för att lyfta fram svaga ekon (annars ser
-        // bilden nästan tom ut, eftersom 95% av returer ligger under 64).
-        val normalized = value.toDouble() / FurunoProtocol.PIXEL_VALUES
-        val mapped = FurunoProtocol.ECHO_FLOOR + (normalized.pow(1.0 / 18.0) * usable)
-        return mapped.toInt().coerceIn(0, 255).toByte()
+    companion object {
+        /**
+         * Förberäknad gammatabell (samma 18:e-rots-kurva för lågeffekt-
+         * radarer som mayara-server använder). Tidigare räknades pow() per
+         * pixel – 1024 pixlar × ~2000 spokes/s = ~2 miljoner pow() per
+         * sekund, vilket ensamt tappade ramar på en telefon.
+         */
+        private val GAMMA_LUT: ByteArray = ByteArray(256) { value ->
+            if (value == 0) {
+                0.toByte()
+            } else {
+                val pixelMax = 254
+                val usable = pixelMax - FurunoProtocol.ECHO_FLOOR
+                val normalized = value.toDouble() / FurunoProtocol.PIXEL_VALUES
+                val mapped = FurunoProtocol.ECHO_FLOOR + (normalized.pow(1.0 / 18.0) * usable)
+                mapped.toInt().coerceIn(0, 255).toByte()
+            }
+        }
     }
 }

@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- Krävs för att Android-WiFi-drivrutinen inte ska filtrera bort inkommande
+         multicast-paket (spoke-data på 239.255.0.2). Utan denna + MulticastLock
+         lyckas joinGroup() men INGA paket når appen. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Krävs av Android för WiFi-scan/anslutning på äldre API-nivåer -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

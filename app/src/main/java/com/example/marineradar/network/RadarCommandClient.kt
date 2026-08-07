@@ -1,7 +1,11 @@
 package com.example.marineradar.network
 
 import com.example.marineradar.debug.FileLogger
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,19 +36,24 @@ data class RadarControls(
  * Kommandokanal, porterad från mayara-serverns `command.rs` (wire-format
  * för kommandon) och `mod.rs`/`report.rs` (login-handshake).
  *
- * VIKTIGT om [LOGIN_PORT]: login-handshakens BYTEFORMAT
- * (`LOGIN_MESSAGE`/`LOGIN_EXPECTED_HEADER`) är verifierat från
- * källkoden, men vilken TCP-PORT man ska ansluta till för att inleda
- * handskakningen är inte bekräftad mot riktig hårdvara – vi har antagit
- * `BASE_PORT` (10000) eftersom det är den logiska "basen" för hela
- * portfamiljen (beacon=+10, data=+24). Om detta visar sig fel mot din
- * riktiga DRS4W, justera konstanten och testa igen; emulatorn använder
- * samma antagande så den fungerar oavsett.
+ * [LOGIN_PORT] är nu 10010 (BEACON_PORT), i linje med mayara-server som
+ * inleder handskakningen mot radarns egen beacon-/källport. Tidigare
+ * antog vi 10000 (BASE_PORT), vilket ger connection refused/timeout mot
+ * riktig DRS4W-hårdvara. Kommandoporten läses ut ur login-svaret som
+ * BASE_PORT + offset.
  */
 class RadarCommandClient {
 
     companion object {
-        const val LOGIN_PORT = FurunoProtocol.BASE_PORT // 10000, se varning ovan
+        /**
+         * TCP-porten för login-handskakningen. mayara-server ansluter till
+         * radarns EGEN käll-/beaconport (10010) – inte 10000. Med 10000 får
+         * man connection refused / timeout mot riktig DRS4W-hårdvara.
+         */
+        const val LOGIN_PORT = FurunoProtocol.BEACON_PORT // 10010
+
+        /** Intervall för AliveCheck ($RE3) – radarn stänger kanalen utan dessa. */
+        const val ALIVE_INTERVAL_MS = 5_000L
 
         /** 56 byte, porterad från LOGIN_MESSAGE i protocol.rs. */
         val LOGIN_MESSAGE: ByteArray = byteArrayOf(
@@ -61,6 +70,7 @@ class RadarCommandClient {
 
     private var socket: Socket? = null
     private var writer: OutputStream? = null
+    private var aliveJob: Job? = null
 
     private val _controls = MutableStateFlow(RadarControls())
     val controls: StateFlow<RadarControls> = _controls.asStateFlow()
@@ -77,16 +87,32 @@ class RadarCommandClient {
 
             val s = Socket()
             s.connect(InetSocketAddress(radarIp, port), 5000)
+            // Radarn släpper tysta kontrollsocketar – håll TCP-nivån vid liv också.
+            s.keepAlive = true
+            s.tcpNoDelay = true
             socket = s
             writer = s.getOutputStream()
             _controls.value = _controls.value.copy(connected = true)
 
-            // Initiala statusfrågor (motsvarar Command::init() i command.rs, förenklat)
+            // Initiala statusfrågor (motsvarar Command::init() i command.rs).
+            // $R96 (Modules) är obligatorisk – den identifierar radarmodellen
+            // och får radarn att börja rapportera överhuvudtaget.
+            sendCommand('R', 0x96, emptyList())
             sendCommand('R', 0x69, emptyList())
             sendCommand('R', 0x62, emptyList())
             sendCommand('R', 0x63, emptyList())
             sendCommand('R', 0x64, emptyList())
             sendCommand('R', 0x65, emptyList())
+
+            // AliveCheck: mayara skickar $RE3 var 5:e sekund. Utan den
+            // stänger radarn kommandokanalen efter ~15 s och spoke-strömmen
+            // dör med den.
+            aliveJob = CoroutineScope(Dispatchers.IO).launch {
+                while (isActive) {
+                    delay(ALIVE_INTERVAL_MS)
+                    sendCommand('R', 0xE3, emptyList())
+                }
+            }
 
             val reader = BufferedReader(InputStreamReader(s.getInputStream()))
             while (isActive) {
@@ -102,6 +128,8 @@ class RadarCommandClient {
     }
 
     fun close() {
+        aliveJob?.cancel()
+        aliveJob = null
         try {
             socket?.close()
         } catch (_: Exception) { }
@@ -190,8 +218,13 @@ class RadarCommandClient {
     // -------------------------------------------------------------------
 
     private fun handleReportLine(rawLine: String) {
-        val line = rawLine.trim()
-        if (!line.startsWith("\$N") || line.length < 3) return
+        // mayara letar upp FÖRSTA '$' i bufferten istället för att kräva att
+        // raden börjar med "$N" – radarn kan skicka partiella skrivningar och
+        // skräptecken före rapporten, och då tappade vi hela raden.
+        val dollar = rawLine.indexOf('$')
+        if (dollar < 0) return
+        val line = rawLine.substring(dollar).trim()
+        if (line.length < 4) return
         FileLogger.log("INFO", "RadarCommandClient: rapport $line")
 
         val body = line.substring(2)

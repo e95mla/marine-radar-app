@@ -62,10 +62,11 @@ class RadarWifiManager(private val context: Context) {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 FileLogger.log("INFO", "RadarWifiManager: nätverk tillgängligt för $ssid")
-                // Viktigt: binda processen så DNS/vanlig trafik också kan
-                // routas hit vid behov, men vi använder ändå explicit
-                // socket-binding i RadarUdpClient för säkerhets skull.
-                connectivityManager.bindProcessToNetwork(network)
+                // OBS: vi binder INTE processen till nätet
+                // (bindProcessToNetwork). Alla radar-sockets binds explicit
+                // per socket i RadarUdpClient/RadarCommandClient, och en
+                // process-wide bind krockar med mobildata/andra nät och kan
+                // göra att sockets hamnar på fel interface.
                 trySend(WifiConnectionState.Connected(network))
             }
 
@@ -85,7 +86,6 @@ class RadarWifiManager(private val context: Context) {
 
         awaitClose {
             connectivityManager.unregisterNetworkCallback(callback)
-            connectivityManager.bindProcessToNetwork(null)
         }
     }
 }

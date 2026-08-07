@@ -61,6 +61,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     val isEmulatorMode: StateFlow<Boolean> = _isEmulatorMode.asStateFlow()
 
     private var commandClient: RadarCommandClient? = null
+    private var spokeDecoder: FurunoSpokeDecoder? = null
 
     // -------------------------------------------------------------------
     // Karta + positionering
@@ -141,7 +142,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         // innan vi börjar fråga den.
         viewModelScope.launch {
             delay(300)
-            startRadarSession(RadarUdpClient(null))
+            startRadarSession(RadarUdpClient(null, getApplication()))
         }
     }
 
@@ -169,7 +170,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                             FileLogger.log("INFO", "$TAG: WiFi anslutet")
                             _appState.value = RadarAppState.DiscoveringRadar
                             _connectedNetwork.value = state.network
-                            startRadarSession(RadarUdpClient(state.network))
+                            startRadarSession(RadarUdpClient(state.network, getApplication()))
                         }
                         is WifiConnectionState.Failed -> {
                             FileLogger.log("WARN", "$TAG: WiFi misslyckades: ${state.reason}")
@@ -207,6 +208,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startSpokeListener(udpClient: RadarUdpClient) {
         val decoder = FurunoSpokeDecoder() // en instans per session – encoding 2/3 är delta-kodat
+        spokeDecoder = decoder
         viewModelScope.launch {
             udpClient.listenForSpokes()
                 .catch { e ->
@@ -243,7 +245,13 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPower(transmit: Boolean) = launchCommand { commandClient?.setPower(transmit) }
+    fun setPower(transmit: Boolean) = launchCommand {
+        // Delta-avkodningen (encoding 2/3) refererar föregående spoke – när
+        // radarn går till standby måste tillståndet nollställas, annars blir
+        // första varvet efter uppvaknandet brus.
+        if (!transmit) spokeDecoder?.reset()
+        commandClient?.setPower(transmit)
+    }
     fun stepRange(up: Boolean) = launchCommand { commandClient?.stepRange(up) }
     fun setGain(auto: Boolean, value: Int) = launchCommand { commandClient?.setGain(auto, value) }
     fun setSea(auto: Boolean, value: Int) = launchCommand { commandClient?.setSea(auto, value) }

@@ -358,10 +358,12 @@ class FurunoRadarEmulator {
         try {
             server = java.net.ServerSocket().apply {
                 reuseAddress = true
-                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), RadarCommandClient.LOGIN_PORT + 1))
+                // Klienten räknar ut kommandoporten som BASE_PORT + offset
+                // (offset = 1 nedan i login-svaret), inte LOGIN_PORT + 1.
+                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), FurunoProtocol.BASE_PORT + 1))
             }
             dataServerSocket = server
-            FileLogger.log("INFO", "FurunoRadarEmulator: kommandokanal på port ${RadarCommandClient.LOGIN_PORT + 1}")
+            FileLogger.log("INFO", "FurunoRadarEmulator: kommandokanal på port ${FurunoProtocol.BASE_PORT + 1}")
 
             while (kotlinx.coroutines.currentCoroutineContext().isActive) {
                 val client = try {

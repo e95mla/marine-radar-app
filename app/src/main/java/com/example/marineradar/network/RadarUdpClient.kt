@@ -1,6 +1,8 @@
 package com.example.marineradar.network
 
+import android.content.Context
 import android.net.Network
+import android.net.wifi.WifiManager
 import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.debug.PacketLogEntry
 import com.example.marineradar.debug.PacketLogger
@@ -32,7 +34,7 @@ data class RadarInfo(
  * protokollet (porterat från mayara-servers `src/lib/brand/furuno/`).
  * Ingen gissning längre för dessa delar – se [FurunoProtocol].
  */
-class RadarUdpClient(private val network: Network?) {
+class RadarUdpClient(private val network: Network?, private val context: Context? = null) {
 
     /**
      * Skickar de tre discovery-paketen (beacon-fråga, modell-fråga,
@@ -57,17 +59,37 @@ class RadarUdpClient(private val network: Network?) {
             "RadarUdpClient: discovery mot port ${FurunoProtocol.BEACON_PORT}, broadcast-mål: $broadcastTargets"
         )
 
+        // VIKTIGT: riktig Furuno-hårdvara skickar sina beacon-/modell-svar
+        // till den FASTA porten 10010 (broadcast), inte tillbaka till vår
+        // avsändarport. Lyssnar vi på en ephemeral port ser vi därför aldrig
+        // svaret från en riktig radar (emulatorn svarar till avsändarporten
+        // och dolde buggen). Vi binder därför 10010 med SO_REUSEADDR, och
+        // faller bara tillbaka till ephemeral port om porten är upptagen.
         val socket = try {
             DatagramSocket(null).apply {
                 reuseAddress = true
-                bind(InetSocketAddress(0))
+                bind(InetSocketAddress(FurunoProtocol.BEACON_PORT))
                 broadcast = true
                 soTimeout = 1000
             }.also { network?.bindSocket(it) }
-        } catch (e: Exception) {
-            FileLogger.log("ERROR", "RadarUdpClient: kunde inte skapa discovery-socket", e)
-            close(e)
-            return@callbackFlow
+        } catch (bindError: Exception) {
+            FileLogger.log(
+                "WARN",
+                "RadarUdpClient: kunde inte binda ${FurunoProtocol.BEACON_PORT} " +
+                    "(${bindError.message}) – faller tillbaka till ephemeral port"
+            )
+            try {
+                DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(0))
+                    broadcast = true
+                    soTimeout = 1000
+                }.also { network?.bindSocket(it) }
+            } catch (e: Exception) {
+                FileLogger.log("ERROR", "RadarUdpClient: kunde inte skapa discovery-socket", e)
+                close(e)
+                return@callbackFlow
+            }
         }
 
         fun sendPacket(name: String, bytes: ByteArray) {
@@ -220,6 +242,21 @@ class RadarUdpClient(private val network: Network?) {
 
     private fun listenMulticastSpokes(scope: ProducerScope<ByteArray>) {
         var socket: MulticastSocket? = null
+        // Utan MulticastLock (och CHANGE_WIFI_MULTICAST_STATE i manifestet)
+        // filtrerar Androids WiFi-drivrutin bort alla multicast-paket –
+        // joinGroup() lyckas men vi får aldrig någon spoke-data.
+        val multicastLock = try {
+            (context?.applicationContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
+                ?.createMulticastLock("marineradar-spokes")
+                ?.apply {
+                    setReferenceCounted(true)
+                    acquire()
+                    FileLogger.log("INFO", "RadarUdpClient: MulticastLock taget")
+                }
+        } catch (e: Exception) {
+            FileLogger.log("WARN", "RadarUdpClient: kunde inte ta MulticastLock: ${e.message}")
+            null
+        }
         try {
             val group = InetAddress.getByName(FurunoProtocol.SPOKE_MULTICAST_IP)
             socket = MulticastSocket(FurunoProtocol.DATA_PORT)
@@ -249,6 +286,9 @@ class RadarUdpClient(private val network: Network?) {
             try {
                 socket?.close()
             } catch (_: Exception) { }
+            try {
+                if (multicastLock?.isHeld == true) multicastLock.release()
+            } catch (_: Exception) { }
         }
     }
 
@@ -270,11 +310,17 @@ class RadarUdpClient(private val network: Network?) {
 
     private fun findWifiInterface(): NetworkInterface? {
         return try {
-            NetworkInterface.getNetworkInterfaces().asSequence().firstOrNull { iface ->
-                iface.isUp && !iface.isLoopback && iface.inetAddresses.asSequence().any {
+            val candidates = NetworkInterface.getNetworkInterfaces().asSequence()
+                .filter { it.isUp && !it.isLoopback && it.supportsMulticast() }
+                .toList()
+            // Föredra ett interface på radarns vanliga subnät, men FALL INTE
+            // tillbaka till "inget interface" om DHCP delat ut ett annat
+            // subnät – ta då första bästa multicast-dugliga interface.
+            candidates.firstOrNull { iface ->
+                iface.inetAddresses.asSequence().any {
                     it.hostAddress?.startsWith(RadarProtocolConstants.RADAR_SUBNET_PREFIX) == true
                 }
-            }
+            } ?: candidates.firstOrNull()
         } catch (_: Exception) {
             null
         }
