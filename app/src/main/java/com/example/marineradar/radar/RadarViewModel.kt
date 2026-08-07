@@ -316,7 +316,9 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Startar login + kommandokanal mot radarn (Range/Gain/Sea/Rain/Standby-Transmit). */
     private fun startCommandChannel(radarIp: java.net.InetAddress) {
-        val client = RadarCommandClient()
+        // Binder kommandokanalen till radarns WiFi-nätverk – annars går TCP ut
+        // via mobildata (default-nätverket) och timeoutar.
+        val client = RadarCommandClient(_connectedNetwork.value)
         commandClient = client
         viewModelScope.launch {
             client.controls.collect { _radarControls.value = it }
