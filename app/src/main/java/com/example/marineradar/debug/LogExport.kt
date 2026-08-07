@@ -17,6 +17,12 @@ import java.util.Locale
  */
 object LogExport {
 
+    /** Föreslaget filnamn när rapporten laddas ner via "Spara som"-dialogen. */
+    fun suggestedFileName(): String {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        return "marine_radar_rapport_$timestamp.txt"
+    }
+
     fun buildFullReport(): String {
         val sb = StringBuilder()
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())

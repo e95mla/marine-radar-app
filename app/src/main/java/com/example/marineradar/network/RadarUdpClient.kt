@@ -22,6 +22,9 @@ import java.net.MulticastSocket
 import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 
+private fun ByteArray.hexHead(n: Int = 24): String =
+    take(n).joinToString(" ") { "%02X".format(it) } + if (size > n) " …(${size} B)" else ""
+
 data class RadarInfo(
     val ipAddress: InetAddress,
     val model: String?,
@@ -35,6 +38,29 @@ data class RadarInfo(
  * Ingen gissning längre för dessa delar – se [FurunoProtocol].
  */
 class RadarUdpClient(private val network: Network?, private val context: Context? = null) {
+
+    private companion object {
+        /** Hur ofta mottagningsstatistik skrivs till loggen. */
+        const val STATS_INTERVAL_MS = 5_000L
+    }
+
+    /** Skriver ut alla nätverksinterface + adresser – visar direkt om telefonen
+     *  faktiskt sitter på radarns nät eller om trafiken går via mobilnätet. */
+    private fun logInterfaces(reason: String) {
+        try {
+            val text = NetworkInterface.getNetworkInterfaces().asSequence()
+                .filter { it.isUp }
+                .joinToString("; ") { iface ->
+                    val addrs = iface.inetAddresses.asSequence()
+                        .mapNotNull { it.hostAddress }
+                        .joinToString(",")
+                    "${iface.name}[mc=${iface.supportsMulticast()},lo=${iface.isLoopback}]=$addrs"
+                }
+            FileLogger.log("INFO", "RadarUdpClient: interface ($reason): $text")
+        } catch (e: Exception) {
+            FileLogger.log("WARN", "RadarUdpClient: kunde inte lista interface: ${e.message}")
+        }
+    }
 
     /**
      * Skickar de tre discovery-paketen (beacon-fråga, modell-fråga,
@@ -51,6 +77,7 @@ class RadarUdpClient(private val network: Network?, private val context: Context
      */
     fun discover(timeoutMs: Int = 8000, overrideTargets: List<String>? = null) = callbackFlow<RadarInfo> {
         network?.let { NetworkDiagnostics.logInterfaceDetails(it) }
+        logInterfaces("discovery")
         val broadcastTargets = overrideTargets
             ?: network?.let { NetworkDiagnostics.broadcastTargets(it) }
             ?: listOf("127.0.0.1")
@@ -91,6 +118,13 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                 return@callbackFlow
             }
         }
+
+        FileLogger.log(
+            "INFO",
+            "RadarUdpClient: discovery-socket bunden till lokal port ${socket.localPort} " +
+                "(önskad ${FurunoProtocol.BEACON_PORT}), broadcast=${socket.broadcast}, " +
+                "nätverksbunden=${network != null}"
+        )
 
         fun sendPacket(name: String, bytes: ByteArray) {
             for (targetIp in broadcastTargets) {
@@ -145,6 +179,12 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                         )
                     )
 
+                    FileLogger.log(
+                        "INFO",
+                        "RadarUdpClient: discovery RX ${packet.length} B från " +
+                            "${packet.address.hostAddress}:${packet.port} → ${data.hexHead()}"
+                    )
+
                     if (data.size == FurunoProtocol.MODEL_REPORT_LENGTH) {
                         model = FurunoProtocol.cString(
                             data.copyOfRange(
@@ -166,6 +206,12 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                         val nameBytes = data.copyOfRange(16, minOf(24, data.size))
                         name = FurunoProtocol.cString(nameBytes)
                         FileLogger.log("INFO", "RadarUdpClient: beacon-rapport mottagen: name=$name")
+                    } else {
+                        FileLogger.log(
+                            "WARN",
+                            "RadarUdpClient: okänt discovery-svar (${data.size} B) – varken " +
+                                "modell-rapport (${FurunoProtocol.MODEL_REPORT_LENGTH} B) eller beacon-header"
+                        )
                     }
                 } catch (_: SocketTimeoutException) {
                     // normalt, fortsätt tills deadline
@@ -200,6 +246,8 @@ class RadarUdpClient(private val network: Network?, private val context: Context
             "RadarUdpClient: lyssnar efter spoke-data på port ${FurunoProtocol.DATA_PORT} (multicast + broadcast)"
         )
 
+        logInterfaces("spoke-lyssning")
+
         try {
             coroutineScope {
                 launch { listenBroadcastSpokes(this@callbackFlow) }
@@ -222,15 +270,43 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                 soTimeout = 2000
             }
             network?.bindSocket(socket)
+            FileLogger.log(
+                "INFO",
+                "RadarUdpClient: broadcast spoke-socket bunden till ${socket.localPort}"
+            )
 
             val buf = ByteArray(8192)
+            var packets = 0L
+            var bytes = 0L
+            var lastStat = System.currentTimeMillis()
             while (scope.isActive) {
                 try {
                     val packet = DatagramPacket(buf, buf.size)
                     socket.receive(packet)
+                    if (packets == 0L) {
+                        FileLogger.log(
+                            "INFO",
+                            "RadarUdpClient: FÖRSTA broadcast-spoke-paketet " +
+                                "(${packet.length} B) från ${packet.address.hostAddress}:${packet.port} → " +
+                                packet.data.copyOf(packet.length).hexHead()
+                        )
+                    }
+                    packets++
+                    bytes += packet.length
                     emitSpokePacket(scope, packet, "broadcast")
                 } catch (_: SocketTimeoutException) {
                     // normalt, fortsätt
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastStat >= STATS_INTERVAL_MS) {
+                    FileLogger.log(
+                        if (packets == 0L) "WARN" else "INFO",
+                        "RadarUdpClient: broadcast-statistik – $packets paket / $bytes B " +
+                            "på port ${FurunoProtocol.DATA_PORT} de senaste " +
+                            "${(now - lastStat) / 1000}s" +
+                            if (packets == 0L) " (INGEN data från radarn)" else ""
+                    )
+                    packets = 0; bytes = 0; lastStat = now
                 }
             }
         } catch (e: Exception) {
@@ -269,15 +345,44 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                 socket.joinGroup(group)
             }
             socket.soTimeout = 2000
+            FileLogger.log(
+                "INFO",
+                "RadarUdpClient: multicast ansluten till ${FurunoProtocol.SPOKE_MULTICAST_IP}:" +
+                    "${FurunoProtocol.DATA_PORT} via interface=${netIf?.name ?: "(system-default)"}, " +
+                    "MulticastLock=${multicastLock?.isHeld == true}"
+            )
 
             val buf = ByteArray(8192)
+            var packets = 0L
+            var bytes = 0L
+            var lastStat = System.currentTimeMillis()
             while (scope.isActive) {
                 try {
                     val packet = DatagramPacket(buf, buf.size)
                     socket.receive(packet)
+                    if (packets == 0L) {
+                        FileLogger.log(
+                            "INFO",
+                            "RadarUdpClient: FÖRSTA multicast-spoke-paketet " +
+                                "(${packet.length} B) från ${packet.address.hostAddress}:${packet.port} → " +
+                                packet.data.copyOf(packet.length).hexHead()
+                        )
+                    }
+                    packets++
+                    bytes += packet.length
                     emitSpokePacket(scope, packet, "multicast")
                 } catch (_: SocketTimeoutException) {
                     // normalt, fortsätt
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastStat >= STATS_INTERVAL_MS) {
+                    FileLogger.log(
+                        if (packets == 0L) "WARN" else "INFO",
+                        "RadarUdpClient: multicast-statistik – $packets paket / $bytes B " +
+                            "de senaste ${(now - lastStat) / 1000}s" +
+                            if (packets == 0L) " (INGEN data på ${FurunoProtocol.SPOKE_MULTICAST_IP})" else ""
+                    )
+                    packets = 0; bytes = 0; lastStat = now
                 }
             }
         } catch (e: Exception) {

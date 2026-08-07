@@ -233,6 +233,39 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private fun startSpokeListener(udpClient: RadarUdpClient) {
         val decoder = FurunoSpokeDecoder() // en instans per session – encoding 2/3 är delta-kodat
         spokeDecoder = decoder
+        var packetCount = 0L
+        var spokeCount = 0L
+        var errorCount = 0L
+        var lastSpokeAtMs = 0L
+        val sessionStart = System.currentTimeMillis()
+
+        // Hälsokontroll: skriver var 5:e sekund vad som faktiskt kommer in,
+        // så att loggen visar om problemet är "inga paket alls" (nätverk/
+        // multicast) eller "paket kommer men avkodas inte" (protokoll).
+        viewModelScope.launch {
+            while (_appState.value is RadarAppState.Streaming) {
+                delay(5_000)
+                val secs = (System.currentTimeMillis() - sessionStart) / 1000
+                val sinceSpoke =
+                    if (lastSpokeAtMs == 0L) "aldrig" else "${(System.currentTimeMillis() - lastSpokeAtMs) / 1000}s sedan"
+                FileLogger.log(
+                    if (spokeCount == 0L) "WARN" else "INFO",
+                    "$TAG: sessionsstatus efter ${secs}s – paket=$packetCount, " +
+                        "avkodade spokes=$spokeCount, avkodningsfel=$errorCount, " +
+                        "senaste spoke=$sinceSpoke, kommandokanal=${_radarControls.value.connected}, " +
+                        "sändning=${_radarControls.value.powerTransmit}" +
+                        when {
+                            packetCount == 0L ->
+                                " → INGEN UDP-data alls: kontrollera att telefonen sitter på radarns WiFi " +
+                                    "och att MulticastLock togs (se RadarUdpClient-raderna ovan)"
+                            spokeCount == 0L ->
+                                " → paket kommer in men inga spokes avkodas: fel format/encoding, se hex-dump i paketloggen"
+                            else -> ""
+                        }
+                )
+            }
+        }
+
         viewModelScope.launch {
             udpClient.listenForSpokes()
                 .catch { e ->
@@ -242,13 +275,37 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 .collect { raw ->
+                    packetCount++
                     try {
                         val spokes = decoder.decodeFrame(raw)
-                        val renderer = _ppiRenderer.value ?: return@collect
+                        if (spokes.isEmpty()) {
+                            if (packetCount <= 20 || packetCount % 200 == 0L) {
+                                FileLogger.log(
+                                    "WARN",
+                                    "$TAG: paket #$packetCount (${raw.size} B) gav 0 spokes – " +
+                                        raw.take(24).joinToString(" ") { "%02X".format(it) }
+                                )
+                            }
+                        } else if (spokeCount == 0L) {
+                            FileLogger.log(
+                                "INFO",
+                                "$TAG: FÖRSTA avkodade spokes: ${spokes.size} st, " +
+                                    "vinkel=${spokes.first().angle}, " +
+                                    "celler=${spokes.first().intensities.size}"
+                            )
+                        }
+                        spokeCount += spokes.size
+                        if (spokes.isNotEmpty()) lastSpokeAtMs = System.currentTimeMillis()
+                        val renderer = _ppiRenderer.value
+                        if (renderer == null) {
+                            FileLogger.log("WARN", "$TAG: ingen PPI-renderare aktiv – spokes kastas")
+                            return@collect
+                        }
                         for (spoke in spokes) {
                             renderer.drawSpoke(spoke.angle, spoke.intensities)
                         }
                     } catch (e: Exception) {
+                        errorCount++
                         // Ett enskilt trasigt/oväntat paket ska aldrig krascha
                         // appen – logga och hoppa bara över det.
                         FileLogger.log("WARN", "$TAG: Kunde inte avkoda spoke-paket (${raw.size} B)", e)

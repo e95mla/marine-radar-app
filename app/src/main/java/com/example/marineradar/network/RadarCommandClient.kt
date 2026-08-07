@@ -71,6 +71,8 @@ class RadarCommandClient {
     private var socket: Socket? = null
     private var writer: OutputStream? = null
     private var aliveJob: Job? = null
+    private var aliveCount = 0
+    private var reportCount = 0
 
     private val _controls = MutableStateFlow(RadarControls())
     val controls: StateFlow<RadarControls> = _controls.asStateFlow()
@@ -82,10 +84,12 @@ class RadarCommandClient {
      */
     suspend fun connectAndListen(radarIp: InetAddress) = withContext(Dispatchers.IO) {
         try {
+            FileLogger.log("INFO", "RadarCommandClient: loggar in mot $radarIp:$LOGIN_PORT (TCP)")
             val port = login(radarIp)
             FileLogger.log("INFO", "RadarCommandClient: inloggad mot $radarIp, kommandoport=$port")
 
             val s = Socket()
+            FileLogger.log("INFO", "RadarCommandClient: öppnar kommandosocket mot $radarIp:$port")
             s.connect(InetSocketAddress(radarIp, port), 5000)
             // Radarn släpper tysta kontrollsocketar – håll TCP-nivån vid liv också.
             s.keepAlive = true
@@ -93,6 +97,7 @@ class RadarCommandClient {
             socket = s
             writer = s.getOutputStream()
             _controls.value = _controls.value.copy(connected = true)
+            FileLogger.log("INFO", "RadarCommandClient: kommandokanal öppen (lokal port ${s.localPort})")
 
             // Initiala statusfrågor (motsvarar Command::init() i command.rs).
             // $R96 (Modules) är obligatorisk – den identifierar radarmodellen
@@ -111,16 +116,33 @@ class RadarCommandClient {
                 while (isActive) {
                     delay(ALIVE_INTERVAL_MS)
                     sendCommand('R', 0xE3, emptyList())
+                    aliveCount++
+                    if (aliveCount % 6 == 0) {
+                        FileLogger.log(
+                            "INFO",
+                            "RadarCommandClient: $aliveCount AliveCheck (\$RE3) skickade, " +
+                                "$reportCount rapporter mottagna från radarn" +
+                                if (reportCount == 0) " (radarn svarar INTE på kommandokanalen)" else ""
+                        )
+                    }
                 }
             }
 
             val reader = BufferedReader(InputStreamReader(s.getInputStream()))
             while (isActive) {
-                val line = reader.readLine() ?: break
+                val line = reader.readLine()
+                if (line == null) {
+                    FileLogger.log("WARN", "RadarCommandClient: radarn stängde kommandokanalen (EOF)")
+                    break
+                }
                 handleReportLine(line)
             }
         } catch (e: Exception) {
-            FileLogger.log("WARN", "RadarCommandClient: kommandokanal avslutad: ${e.message}")
+            FileLogger.log(
+                "ERROR",
+                "RadarCommandClient: kommandokanal avslutad (${e.javaClass.simpleName}: ${e.message})",
+                e
+            )
         } finally {
             _controls.value = _controls.value.copy(connected = false)
             close()
@@ -154,6 +176,11 @@ class RadarCommandClient {
             }
             val portBytes = ByteArray(4)
             readFully(input, portBytes)
+            FileLogger.log(
+                "INFO",
+                "RadarCommandClient: login-svar OK, portbytes=" +
+                    portBytes.joinToString(" ") { "%02X".format(it) }
+            )
             return FurunoProtocol.BASE_PORT +
                 (((portBytes[0].toInt() and 0xFF) shl 8) or (portBytes[1].toInt() and 0xFF))
         }
@@ -177,6 +204,9 @@ class RadarCommandClient {
         try {
             w.write(sb.toString().toByteArray(Charsets.US_ASCII))
             w.flush()
+            if (idHex != 0xE3) {
+                FileLogger.log("INFO", "RadarCommandClient: TX ${sb.toString().trim()}")
+            }
         } catch (e: Exception) {
             FileLogger.log("WARN", "RadarCommandClient: kunde inte skicka kommando: ${e.message}")
         }
@@ -225,6 +255,7 @@ class RadarCommandClient {
         if (dollar < 0) return
         val line = rawLine.substring(dollar).trim()
         if (line.length < 4) return
+        reportCount++
         FileLogger.log("INFO", "RadarCommandClient: rapport $line")
 
         val body = line.substring(2)

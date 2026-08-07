@@ -2,6 +2,10 @@ package com.example.marineradar.ui
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,15 +37,24 @@ fun DebugScreen(
 ) {
     var subTab by remember { mutableStateOf(0) }
     val context = LocalContext.current
+    val saveFile = rememberSaveToFile()
 
     Column(modifier = modifier.fillMaxSize()) {
         Button(
-            onClick = { LogExport.shareFullReport(context) },
+            onClick = { saveFile(LogExport.suggestedFileName(), LogExport.buildFullReport()) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
-            Text("📄 Exportera ALLT (applogg + paket + krasch) som en fil")
+            Text("\u2b07\ufe0f Ladda ner ALLT (applogg + paket + krasch) till en fil")
+        }
+        OutlinedButton(
+            onClick = { LogExport.shareFullReport(context) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+        ) {
+            Text("\ud83d\udce4 Dela istället till en annan app")
         }
 
         TabRow(selectedTabIndex = subTab) {
@@ -65,6 +78,7 @@ private fun PacketLogTab(portScanner: RadarPortScanner?, passiveScanner: RadarPa
     var selected by remember { mutableStateOf<PacketLogEntry?>(null) }
     var scanStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val saveFile = rememberSaveToFile()
 
     Column(modifier = modifier.padding(8.dp)) {
         Row(
@@ -115,6 +129,12 @@ private fun PacketLogTab(portScanner: RadarPortScanner?, passiveScanner: RadarPa
 
             OutlinedButton(onClick = { PacketLogger.clear() }) {
                 Text("Rensa")
+            }
+
+            OutlinedButton(onClick = {
+                saveFile("marine_radar_packets.txt", PacketLogger.exportAsText())
+            }) {
+                Text("Ladda ner")
             }
 
             OutlinedButton(onClick = { sharePacketLog(context) }) {
@@ -171,11 +191,13 @@ private fun PacketLogTab(portScanner: RadarPortScanner?, passiveScanner: RadarPa
 private fun AppLogTab(modifier: Modifier) {
     val context = LocalContext.current
     var text by remember { mutableStateOf(FileLogger.readLog()) }
+    val saveFile = rememberSaveToFile()
 
     Column(modifier = modifier.padding(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { text = FileLogger.readLog() }) { Text("Uppdatera") }
             OutlinedButton(onClick = { FileLogger.clearLog(); text = FileLogger.readLog() }) { Text("Rensa") }
+            OutlinedButton(onClick = { saveFile("app_log.txt", text) }) { Text("Ladda ner") }
             OutlinedButton(onClick = { shareText(context, text, "app_log.txt", "Dela applogg") }) { Text("Dela") }
         }
         Spacer(Modifier.height(8.dp))
@@ -199,11 +221,13 @@ private fun AppLogTab(modifier: Modifier) {
 private fun CrashLogTab(modifier: Modifier) {
     val context = LocalContext.current
     var text by remember { mutableStateOf(FileLogger.readLastCrash()) }
+    val saveFile = rememberSaveToFile()
 
     Column(modifier = modifier.padding(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { text = FileLogger.readLastCrash() }) { Text("Uppdatera") }
             if (text != null) {
+                OutlinedButton(onClick = { saveFile("crash_log.txt", text ?: "") }) { Text("Ladda ner") }
                 OutlinedButton(onClick = { shareText(context, text ?: "", "crash_log.txt", "Dela kraschrapport") }) {
                     Text("Dela")
                 }
@@ -222,6 +246,39 @@ private fun CrashLogTab(modifier: Modifier) {
                     .verticalScroll(rememberScrollState())
             )
         }
+    }
+}
+
+
+/**
+ * Ger en `save(filnamn, innehåll)`-funktion som öppnar Androids egen
+ * "Spara som"-dialog (Storage Access Framework) så att filen kan sparas
+ * direkt i t.ex. Nedladdningar – utan att behöva skicka den vidare till
+ * en annan app via delningsmenyn.
+ */
+@Composable
+private fun rememberSaveToFile(): (String, String) -> Unit {
+    val context = LocalContext.current
+    var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        val content = pending?.second
+        pending = null
+        if (uri == null || content == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(content.toByteArray())
+            }
+            Toast.makeText(context, "Filen sparad", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            FileLogger.log("ERROR", "Kunde inte spara loggfil", e)
+            Toast.makeText(context, "Kunde inte spara: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+    return { filename, content ->
+        pending = filename to content
+        launcher.launch(filename)
     }
 }
 
