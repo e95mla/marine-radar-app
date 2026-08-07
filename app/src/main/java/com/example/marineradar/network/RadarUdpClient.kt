@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -154,7 +155,7 @@ class RadarUdpClient(private val network: Network?, private val context: Context
             sendPacket("ANNOUNCE_CLIENT", FurunoProtocol.ANNOUNCE_CLIENT_PACKET)
 
             val deadline = System.currentTimeMillis() + timeoutMs
-            var lastRadarAddress: InetAddress? = null
+            var radarAddress: InetAddress? = null
             var name: String? = null
             var model: String? = null
             var serial: String? = null
@@ -165,8 +166,6 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                     val packet = DatagramPacket(buf, buf.size)
                     socket.receive(packet)
                     val data = packet.data.copyOf(packet.length)
-                    lastRadarAddress = packet.address
-
                     PacketLogger.log(
                         PacketLogEntry(
                             timestampMs = System.currentTimeMillis(),
@@ -186,6 +185,7 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                     )
 
                     if (data.size == FurunoProtocol.MODEL_REPORT_LENGTH) {
+                        radarAddress = packet.address
                         model = FurunoProtocol.cString(
                             data.copyOfRange(
                                 FurunoProtocol.MODEL_NAME_OFFSET,
@@ -204,8 +204,20 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                         data.copyOfRange(0, 11).contentEquals(FurunoProtocol.BEACON_REPORT_HEADER)
                     ) {
                         val nameBytes = data.copyOfRange(16, minOf(24, data.size))
-                        name = FurunoProtocol.cString(nameBytes)
-                        FileLogger.log("INFO", "RadarUdpClient: beacon-rapport mottagen: name=$name")
+                        val receivedName = FurunoProtocol.cString(nameBytes)
+                        // Android skickar tillbaka våra egna broadcast-paket till samma
+                        // socket. MAYARA är vårt klientnamn och får aldrig väljas som
+                        // radaradress (det skulle peka kommandokanalen mot telefonen).
+                        if (receivedName.equals("MAYARA", ignoreCase = true)) {
+                            FileLogger.log(
+                                "INFO",
+                                "RadarUdpClient: ignorerar egen beacon-eko från ${packet.address.hostAddress}"
+                            )
+                        } else {
+                            radarAddress = packet.address
+                            name = receivedName
+                            FileLogger.log("INFO", "RadarUdpClient: beacon-rapport mottagen: name=$name")
+                        }
                     } else {
                         FileLogger.log(
                             "WARN",
@@ -218,8 +230,24 @@ class RadarUdpClient(private val network: Network?, private val context: Context
                 }
             }
 
-            if (lastRadarAddress != null && (model != null || name != null)) {
-                trySend(RadarInfo(lastRadarAddress, model, serial, name))
+            val foundAddress = radarAddress
+            if (foundAddress != null && (model != null || name != null)) {
+                val info = RadarInfo(foundAddress, model, serial, name)
+                val sendResult = trySend(info)
+                if (sendResult.isSuccess) {
+                    FileLogger.log(
+                        "INFO",
+                        "RadarUdpClient: discovery klar – skickar radar ${foundAddress.hostAddress}, " +
+                            "model=$model, name=$name till sessionen"
+                    )
+                    // Discovery är ett engångsresultat. Stäng flödet direkt så att
+                    // socket 10010 frigörs och sessionen säkert fortsätter till TCP-login.
+                    close()
+                } else {
+                    val cause = sendResult.exceptionOrNull()
+                    FileLogger.log("ERROR", "RadarUdpClient: kunde inte leverera discovery-resultatet", cause)
+                    close(cause ?: IOException("Discovery-resultatet avvisades"))
+                }
             } else {
                 throw SocketTimeoutException(
                     "Inget svar från radarn på ${FurunoProtocol.BEACON_PORT} inom ${timeoutMs}ms"
@@ -230,7 +258,10 @@ class RadarUdpClient(private val network: Network?, private val context: Context
             close(e)
         }
 
-        awaitClose { socket.close() }
+        awaitClose {
+            FileLogger.log("INFO", "RadarUdpClient: stänger discovery-socket ${socket.localPort}")
+            socket.close()
+        }
     }.flowOn(Dispatchers.IO)
 
     /**
