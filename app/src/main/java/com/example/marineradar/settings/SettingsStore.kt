@@ -51,7 +51,11 @@ class SettingsStore(context: Context) {
             guardWidthDeg = prefs.getFloat("guard_width_deg", d.guardWidthDeg),
             mapProviderName = prefs.getString("map_provider", d.mapProviderName) ?: d.mapProviderName,
             radarOpacity = prefs.getFloat("radar_opacity", d.radarOpacity),
-            mapDarkStyle = prefs.getBoolean("map_dark_style", d.mapDarkStyle),
+            // Migrering: tidigare fanns bara en boolean "mörk stil".
+            mapStyleName = prefs.getString(
+                "map_style",
+                if (prefs.getBoolean("map_dark_style", true)) "DARK" else "STANDARD"
+            ) ?: d.mapStyleName,
             verboseLogging = prefs.getBoolean("verbose_logging", d.verboseLogging)
         )
     }
@@ -84,7 +88,7 @@ class SettingsStore(context: Context) {
             .putFloat("guard_width_deg", s.guardWidthDeg)
             .putString("map_provider", s.mapProviderName)
             .putFloat("radar_opacity", s.radarOpacity)
-            .putBoolean("map_dark_style", s.mapDarkStyle)
+            .putString("map_style", s.mapStyleName)
             .putBoolean("verbose_logging", s.verboseLogging)
             .apply()
     }

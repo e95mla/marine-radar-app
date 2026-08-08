@@ -56,7 +56,8 @@ data class RadarSettings(
     // --- Karta ------------------------------------------------------
     val mapProviderName: String = "OPENSTREETMAP",
     val radarOpacity: Float = SettingsStore.DEFAULT_RADAR_OPACITY,
-    val mapDarkStyle: Boolean = true,
+    /** Kartfilter, se [com.example.marineradar.map.MapStyle]. */
+    val mapStyleName: String = "DARK",
 
     // --- Felsökning -------------------------------------------------
     /** Loggar varje spoke-paket (mycket data – bara vid felsökning). */

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.marineradar.debug.FileLogger
 import com.example.marineradar.location.BoatLocationProvider
 import com.example.marineradar.map.MapProviderType
+import com.example.marineradar.map.MapStyle
 import com.example.marineradar.network.FurunoRadarEmulator
 import com.example.marineradar.network.RadarCommandClient
 import com.example.marineradar.network.RadarControls
@@ -85,7 +86,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         _mapProvider.value = runCatching { MapProviderType.valueOf(updated.mapProviderName) }
             .getOrDefault(MapProviderType.OPENSTREETMAP)
         _radarOpacity.value = updated.radarOpacity
-        _mapDarkStyle.value = updated.mapDarkStyle
+        _mapStyle.value = MapStyle.fromName(updated.mapStyleName)
     }
 
     /** Återställer alla inställningar till fabriksläge. */
@@ -130,8 +131,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val _radarOpacity = MutableStateFlow(settings.load().radarOpacity)
     val radarOpacity: StateFlow<Float> = _radarOpacity.asStateFlow()
 
-    private val _mapDarkStyle = MutableStateFlow(settings.load().mapDarkStyle)
-    val mapDarkStyle: StateFlow<Boolean> = _mapDarkStyle.asStateFlow()
+    private val _mapStyle = MutableStateFlow(MapStyle.fromName(settings.load().mapStyleName))
+    val mapStyle: StateFlow<MapStyle> = _mapStyle.asStateFlow()
 
     private val _boatLocation = MutableStateFlow<com.google.android.gms.maps.model.LatLng?>(null)
     val boatLocation: StateFlow<com.google.android.gms.maps.model.LatLng?> = _boatLocation.asStateFlow()
@@ -187,8 +188,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         updateSettings { it.copy(radarOpacity = value.coerceIn(0f, 1f)) }
     }
 
-    fun setMapDarkStyle(dark: Boolean) {
-        updateSettings { it.copy(mapDarkStyle = dark) }
+    fun setMapStyle(style: MapStyle) {
+        updateSettings { it.copy(mapStyleName = style.name) }
     }
 
     /**

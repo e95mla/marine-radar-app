@@ -11,25 +11,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.marineradar.map.MapStyle
 import com.example.marineradar.radar.PpiRenderer
 import com.google.android.gms.maps.model.LatLng
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.Projection
 import org.osmdroid.views.overlay.Overlay
+import org.osmdroid.views.overlay.TilesOverlay
 import kotlin.math.cos
 
 /**
- * Kartkälla: Carto (basemaps.cartocdn.com), inte OpenStreetMaps EGNA
- * kaklingsservrar (tile.openstreetmap.org). OSM:s egna servrar blockerar
- * (HTTP 403 "Access blocked") appar med generiska/exempel-paketnamn som
- * `com.example.*` för att skydda sina frivilligdrivna resurser mot
- * missbruk – se osmwiki.org/Blocked. Carto tillhandahåller samma
- * OSM-baserade kartdata via sin egen, mer permissiva gratis-CDN, byggd
- * just för den här typen av klientanvändning. Fungerar direkt utan
- * API-nyckel eller vidare konfiguration.
+ * Kartkällor per [MapStyle]. Bas är Carto (basemaps.cartocdn.com), inte
+ * OpenStreetMaps EGNA kaklingsservrar (tile.openstreetmap.org). OSM:s egna
+ * servrar blockerar appar med generiska paketnamn som `com.example.*` för
+ * att skydda sina frivilligdrivna resurser. Carto/OpenTopoMap/Esri
+ * tillhandahåller samma eller kompletterande kartdata utan API-nyckel.
  */
 private val CARTO_DARK = XYTileSource(
     "CartoDBDarkMatter",
@@ -42,7 +44,6 @@ private val CARTO_DARK = XYTileSource(
     "© OpenStreetMap contributors © CARTO"
 )
 
-/** Ljusare kartstil, samma leverantör – valbar i Karta-panelen. */
 private val CARTO_LIGHT = XYTileSource(
     "CartoDBVoyager",
     0, 19, 256, ".png",
@@ -54,13 +55,62 @@ private val CARTO_LIGHT = XYTileSource(
     "© OpenStreetMap contributors © CARTO"
 )
 
+/** Höjdkurvor/terräng. */
+private val OPENTOPO = XYTileSource(
+    "OpenTopoMap",
+    0, 17, 256, ".png",
+    arrayOf(
+        "https://a.tile.opentopomap.org/",
+        "https://b.tile.opentopomap.org/",
+        "https://c.tile.opentopomap.org/"
+    ),
+    "© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)"
+)
+
+/** Natur/friluft – skog, vatten och stigar framhävt (Esri World Topo). */
+private val ESRI_NATURE = object : XYTileSource(
+    "EsriWorldTopo", 0, 19, 256, "",
+    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/"),
+    "© Esri"
+) {
+    // Esri använder z/y/x, osmdroids standard är z/x/y – därav override.
+    override fun getTileURLString(pMapTileIndex: Long): String =
+        baseUrl + MapTileIndex.getZoom(pMapTileIndex) + "/" +
+            MapTileIndex.getY(pMapTileIndex) + "/" + MapTileIndex.getX(pMapTileIndex)
+}
+
+/** Satellit/flygfoto. */
+private val ESRI_SATELLITE = object : XYTileSource(
+    "EsriWorldImagery", 0, 19, 256, "",
+    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"),
+    "© Esri, Maxar, Earthstar Geographics"
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String =
+        baseUrl + MapTileIndex.getZoom(pMapTileIndex) + "/" +
+            MapTileIndex.getY(pMapTileIndex) + "/" + MapTileIndex.getX(pMapTileIndex)
+}
+
+/** Sjökortsdetaljer (bojar, fyrar, farleder) – ritas OVANPÅ en baskarta. */
+private val OPENSEAMAP = XYTileSource(
+    "OpenSeaMap", 0, 18, 256, ".png",
+    arrayOf("https://tiles.openseamap.org/seamark/"),
+    "© OpenSeaMap contributors"
+)
+
+private fun baseSourceFor(style: MapStyle): ITileSource = when (style) {
+    MapStyle.STANDARD -> CARTO_LIGHT
+    MapStyle.DARK -> CARTO_DARK
+    MapStyle.SATELLITE -> ESRI_SATELLITE
+    MapStyle.TERRAIN -> OPENTOPO
+    MapStyle.NATURE -> ESRI_NATURE
+    MapStyle.NAUTICAL -> CARTO_LIGHT
+}
+
 /**
  * OpenStreetMap-baserad karta via osmdroid – helt gratis, ingen
  * API-nyckel behövs. Ritar radarbilden som ett eget [Overlay] som
  * positioneras/roteras/skalas manuellt utifrån båtens GPS-position,
- * kompasskurs och radarns räckvidd (osmdroid har ingen inbyggd
- * "GroundOverlay" som Google Maps, så vi implementerar motsvarande
- * själva via [Projection] för att omvandla lat/long till skärmpixlar).
+ * kompasskurs och radarns räckvidd.
  */
 @Composable
 fun OsmRadarMapView(
@@ -69,7 +119,7 @@ fun OsmRadarMapView(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float = 0.6f,
-    darkStyle: Boolean = true,
+    style: MapStyle = MapStyle.DARK,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -77,17 +127,21 @@ fun OsmRadarMapView(
     val radarOverlay = remember { RadarOverlay() }
     radarOverlay.update(renderer, boatLocation, headingDegrees, rangeMeters, opacity)
 
+    // Sjökortslagret skapas en gång och slås bara av/på – att skapa nya
+    // TilesOverlay vid varje omritning skulle läcka kakelnedladdningar.
+    val seamarkOverlay = remember {
+        TilesOverlay(MapTileProviderBasic(context, OPENSEAMAP), context).apply {
+            loadingBackgroundColor = android.graphics.Color.TRANSPARENT
+            loadingLineColor = android.graphics.Color.TRANSPARENT
+        }
+    }
+
     val mapView = remember {
-        // Beskrivande User-Agent istället för det generiska paketnamnet
-        // – rekommenderas av OSM/Carto för att identifiera appen korrekt.
         Configuration.getInstance().userAgentValue = "MarineRadarApp/1.0"
         Configuration.getInstance().osmdroidTileCache = context.cacheDir
         MapView(context).apply {
-            setTileSource(if (darkStyle) CARTO_DARK else CARTO_LIGHT)
+            setTileSource(baseSourceFor(style))
             setMultiTouchControls(true)
-            // Inbyggda +/- zoomknappar avstängda – de hamnade bakom/
-            // krockade med kontrollpanelen längst ner. Pinch-to-zoom
-            // (setMultiTouchControls ovan) räcker för att zooma.
             zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(15.0)
             overlays.add(radarOverlay)
@@ -95,8 +149,16 @@ fun OsmRadarMapView(
         }
     }
 
-    DisposableEffect(darkStyle) {
-        mapView.setTileSource(if (darkStyle) CARTO_DARK else CARTO_LIGHT)
+    DisposableEffect(style) {
+        mapView.setTileSource(baseSourceFor(style))
+        val hasSeamark = mapView.overlays.contains(seamarkOverlay)
+        if (style == MapStyle.NAUTICAL && !hasSeamark) {
+            // Under radaröverlägget men över baskartan.
+            mapView.overlays.add(0, seamarkOverlay)
+        } else if (style != MapStyle.NAUTICAL && hasSeamark) {
+            mapView.overlays.remove(seamarkOverlay)
+        }
+        mapView.invalidate()
         onDispose { }
     }
 
@@ -116,8 +178,7 @@ fun OsmRadarMapView(
 
     // clipToBounds() är kritiskt här: osmdroids MapView kan annars rendera
     // (och ta emot touch-events för) ett större område än det Compose
-    // faktiskt tilldelat den, vilket gjorde att kartan täckte/blockerade
-    // resten av UI:t (gick inte att lämna kartläget, zoom fungerade inte).
+    // faktiskt tilldelat den, vilket gjorde att kartan täckte resten av UI:t.
     AndroidView(
         modifier = modifier
             .fillMaxSize()

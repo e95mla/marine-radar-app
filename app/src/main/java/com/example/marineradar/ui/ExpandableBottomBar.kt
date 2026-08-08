@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.marineradar.map.MapProviderType
 import com.example.marineradar.network.RadarControls
 
 /**
@@ -51,12 +50,8 @@ fun ExpandableBottomBar(
     onGainChange: (Boolean, Int) -> Unit,
     onSeaChange: (Boolean, Int) -> Unit,
     onRainChange: (Boolean, Int) -> Unit,
-    mapProvider: MapProviderType,
-    onMapProviderChange: (MapProviderType) -> Unit,
     mapOpacity: Float,
     onMapOpacityChange: (Float) -> Unit,
-    mapDarkStyle: Boolean,
-    onMapDarkStyleChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -72,12 +67,8 @@ fun ExpandableBottomBar(
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     MapSettingsPanel(
-                        provider = mapProvider,
-                        onProviderChange = onMapProviderChange,
                         opacity = mapOpacity,
-                        onOpacityChange = onMapOpacityChange,
-                        darkStyle = mapDarkStyle,
-                        onDarkStyleChange = onMapDarkStyleChange
+                        onOpacityChange = onMapOpacityChange
                     )
                 }
             }

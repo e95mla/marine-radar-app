@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import com.example.marineradar.map.MapStyle
 import com.example.marineradar.radar.PpiRenderer
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
@@ -42,7 +43,7 @@ fun GoogleMapRadarView(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float = 0.6f,
-    darkStyle: Boolean = true,
+    style: MapStyle = MapStyle.DARK,
     modifier: Modifier = Modifier
 ) {
     var frame by remember { mutableIntStateOf(0) }
@@ -68,7 +69,7 @@ fun GoogleMapRadarView(
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
-            properties = MapProperties(mapType = if (darkStyle) MapType.HYBRID else MapType.NORMAL)
+            properties = MapProperties(mapType = googleMapType(style))
         ) {
             if (renderer != null && boatLocation != null) {
                 key(frame) {
@@ -97,4 +98,17 @@ fun GoogleMapRadarView(
             )
         }
     }
+}
+
+/**
+ * Översätter appens [MapStyle] till Google Maps egna karttyper. Google
+ * saknar motsvarighet till sjökort/natur, så de faller tillbaka på
+ * närmaste variant – vill man ha riktiga sjökortsdetaljer väljer man
+ * OpenStreetMap som kartleverantör i Inställningar.
+ */
+private fun googleMapType(style: MapStyle): MapType = when (style) {
+    MapStyle.STANDARD, MapStyle.NAUTICAL -> MapType.NORMAL
+    MapStyle.DARK -> MapType.NORMAL
+    MapStyle.SATELLITE -> MapType.HYBRID
+    MapStyle.TERRAIN, MapStyle.NATURE -> MapType.TERRAIN
 }

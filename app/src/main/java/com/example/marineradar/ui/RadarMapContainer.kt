@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.example.marineradar.map.MapProviderType
+import com.example.marineradar.map.MapStyle
 import com.example.marineradar.radar.PpiRenderer
 import com.google.android.gms.maps.model.LatLng
 
@@ -22,7 +23,7 @@ fun RadarMapContainer(
     headingDegrees: Float,
     rangeMeters: Int,
     opacity: Float,
-    darkStyle: Boolean,
+    style: MapStyle,
     modifier: Modifier = Modifier
 ) {
     when (provider) {
@@ -32,7 +33,7 @@ fun RadarMapContainer(
             headingDegrees = headingDegrees,
             rangeMeters = rangeMeters,
             opacity = opacity,
-            darkStyle = darkStyle,
+            style = style,
             modifier = modifier.fillMaxSize()
         )
         MapProviderType.GOOGLE_MAPS -> GoogleMapRadarView(
@@ -41,7 +42,7 @@ fun RadarMapContainer(
             headingDegrees = headingDegrees,
             rangeMeters = rangeMeters,
             opacity = opacity,
-            darkStyle = darkStyle,
+            style = style,
             modifier = modifier.fillMaxSize()
         )
     }

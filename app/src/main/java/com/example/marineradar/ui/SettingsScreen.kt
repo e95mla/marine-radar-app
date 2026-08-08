@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.marineradar.map.MapProviderType
+import com.example.marineradar.map.MapStyle
 import com.example.marineradar.settings.RadarSettings
 import kotlin.math.roundToInt
 
@@ -161,15 +162,39 @@ fun SettingsScreen(
         ) { v -> onChange { it.copy(guardWidthDeg = v) } }
 
         SectionTitle("Karta")
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Kartleverantör",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Column(Modifier.fillMaxWidth()) {
             MapProviderType.values().forEach { provider ->
                 OutlinedButton(
                     onClick = { onChange { it.copy(mapProviderName = provider.name) } },
-                    modifier = Modifier.padding(end = 8.dp)
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                 ) {
                     Text(
                         provider.displayName,
                         fontWeight = if (settings.mapProviderName == provider.name) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Kartfilter", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "Kan även bytas direkt i kartbilden via lager-ikonen (\u2630).",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Column(Modifier.fillMaxWidth()) {
+            MapStyle.values().forEach { style ->
+                OutlinedButton(
+                    onClick = { onChange { it.copy(mapStyleName = style.name) } },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                ) {
+                    Text(
+                        "${style.icon}  ${style.displayName}",
+                        fontWeight = if (settings.mapStyleName == style.name) FontWeight.Bold else FontWeight.Normal
                     )
                 }
             }
@@ -179,7 +204,6 @@ fun SettingsScreen(
             "%.0f %%".format(settings.radarOpacity * 100),
             settings.radarOpacity, 0.1f, 1f
         ) { v -> onChange { it.copy(radarOpacity = v) } }
-        SettingSwitch("Mörk kartstil", null, settings.mapDarkStyle) { v -> onChange { it.copy(mapDarkStyle = v) } }
 
         SectionTitle("Felsökning")
         SettingSwitch(

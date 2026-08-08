@@ -25,6 +25,7 @@ import com.example.marineradar.ui.ExpandableBottomBar
 import com.example.marineradar.ui.PpiView
 import com.example.marineradar.ui.RadarDataBar
 import com.example.marineradar.ui.TargetListPanel
+import com.example.marineradar.ui.MapStylePicker
 import com.example.marineradar.ui.RadarMapContainer
 import com.example.marineradar.ui.SettingsScreen
 import com.example.marineradar.ui.SquareIconToggle
@@ -68,7 +69,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val showMapOverlay by viewModel.showMapOverlay.collectAsState()
     val mapProvider by viewModel.mapProvider.collectAsState()
     val mapOpacity by viewModel.radarOpacity.collectAsState()
-    val mapDarkStyle by viewModel.mapDarkStyle.collectAsState()
+    val mapStyle by viewModel.mapStyle.collectAsState()
     val boatLocation by viewModel.boatLocation.collectAsState()
     val headingDegrees by viewModel.headingDegrees.collectAsState()
     val speedKnots by viewModel.speedKnots.collectAsState()
@@ -188,7 +189,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                 headingDegrees = headingDegrees,
                                 rangeMeters = radarControls.rangeMeters,
                                 opacity = mapOpacity,
-                                darkStyle = mapDarkStyle,
+                                style = mapStyle,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
@@ -271,6 +272,15 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                 .padding(8.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            if (showMapOverlay) {
+                                // Standardikonen för kartlager – byter
+                                // kartfilter (satellit/terräng/sjökort …)
+                                // direkt i bilden, även i helskärm.
+                                MapStylePicker(
+                                    style = mapStyle,
+                                    onStyleChange = { viewModel.setMapStyle(it) }
+                                )
+                            }
                             if (!fullscreen) {
                                 SquareIconToggle(
                                     icon = "🗺️",
@@ -311,12 +321,8 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             onGainChange = { auto, value -> viewModel.setGain(auto, value) },
                             onSeaChange = { auto, value -> viewModel.setSea(auto, value) },
                             onRainChange = { auto, value -> viewModel.setRain(auto, value) },
-                            mapProvider = mapProvider,
-                            onMapProviderChange = { viewModel.setMapProvider(it) },
                             mapOpacity = mapOpacity,
                             onMapOpacityChange = { viewModel.setRadarOpacity(it) },
-                            mapDarkStyle = mapDarkStyle,
-                            onMapDarkStyleChange = { viewModel.setMapDarkStyle(it) },
                             modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
