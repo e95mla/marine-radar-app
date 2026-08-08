@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import com.example.marineradar.map.MapStyle
 import com.example.marineradar.radar.PpiRenderer
@@ -29,6 +30,7 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.delay
+import kotlin.math.cos
 
 /**
  * Google Maps-vy med radarbilden som ett roterande, korrekt
@@ -44,6 +46,9 @@ fun GoogleMapRadarView(
     rangeMeters: Int,
     opacity: Float = 0.6f,
     style: MapStyle = MapStyle.DARK,
+    settings: com.example.marineradar.settings.RadarSettings =
+        com.example.marineradar.settings.RadarSettings(),
+    targets: List<com.example.marineradar.radar.RadarTarget> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     var frame by remember { mutableIntStateOf(0) }
@@ -86,6 +91,30 @@ fun GoogleMapRadarView(
             }
             boatLocation?.let {
                 Marker(state = MarkerState(position = it), title = "Din position")
+            }
+        }
+
+        // Ringar/kurslinje/mål ovanpå kartan – samma lager som i PPI-vyn, men
+        // skalat efter kartans zoom så att inställningarna syns i kartläge.
+        val loc = boatLocation
+        if (loc != null) {
+            val projection = cameraPositionState.projection
+            val screenPoint = remember(projection, loc, frame) {
+                try { projection?.toScreenLocation(loc) } catch (_: Exception) { null }
+            }
+            val metersPerPixel = remember(cameraPositionState.position.zoom, loc) {
+                (156543.03392 * cos(Math.toRadians(loc.latitude)) /
+                    Math.pow(2.0, cameraPositionState.position.zoom.toDouble())).toFloat()
+            }
+            if (screenPoint != null && metersPerPixel > 0f) {
+                MapRadarDecor(
+                    centerPx = Offset(screenPoint.x.toFloat(), screenPoint.y.toFloat()),
+                    radiusPx = rangeMeters / metersPerPixel,
+                    headingDegrees = headingDegrees,
+                    rangeMeters = rangeMeters,
+                    settings = settings,
+                    targets = targets
+                )
             }
         }
 

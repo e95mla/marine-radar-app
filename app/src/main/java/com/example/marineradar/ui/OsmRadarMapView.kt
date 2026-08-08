@@ -3,10 +3,18 @@ package com.example.marineradar.ui
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.MotionEvent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
@@ -120,6 +128,9 @@ fun OsmRadarMapView(
     rangeMeters: Int,
     opacity: Float = 0.6f,
     style: MapStyle = MapStyle.DARK,
+    settings: com.example.marineradar.settings.RadarSettings =
+        com.example.marineradar.settings.RadarSettings(),
+    targets: List<com.example.marineradar.radar.RadarTarget> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -179,13 +190,49 @@ fun OsmRadarMapView(
     // clipToBounds() är kritiskt här: osmdroids MapView kan annars rendera
     // (och ta emot touch-events för) ett större område än det Compose
     // faktiskt tilldelat den, vilket gjorde att kartan täckte resten av UI:t.
-    AndroidView(
-        modifier = modifier
-            .fillMaxSize()
-            .clipToBounds(),
-        factory = { mapView },
-        update = { it.invalidate() }
-    )
+    // Ringar/kurslinje/mål ritas som ett eget Compose-lager ovanpå kartan
+    // (inte inbränt i den halvgenomskinliga ekobilden) så att inställningarna
+    // faktiskt syns även i kartläge.
+    var decorCenter by remember { mutableStateOf<Offset?>(null) }
+    var decorRadius by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(mapView, boatLocation, rangeMeters) {
+        while (true) {
+            val loc = boatLocation
+            if (loc != null) {
+                try {
+                    val point = mapView.projection.toPixels(GeoPoint(loc.latitude, loc.longitude), null)
+                    val metersPerPixelAtEquator = 1.0 / mapView.projection.metersToEquatorPixels(1f)
+                    val latitudeCorrection = cos(Math.toRadians(loc.latitude)).coerceAtLeast(0.01)
+                    val metersPerPixel = metersPerPixelAtEquator / latitudeCorrection
+                    val r = (rangeMeters / metersPerPixel).toFloat()
+                    if (r.isFinite() && r > 0f) {
+                        decorCenter = Offset(point.x.toFloat(), point.y.toFloat())
+                        decorRadius = r
+                    }
+                } catch (_: Exception) {
+                    // Ignorera enstaka projektionsfel – nästa tick försöker igen.
+                }
+            }
+            delay(200)
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize().clipToBounds()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { mapView },
+            update = { it.invalidate() }
+        )
+        MapRadarDecor(
+            centerPx = decorCenter,
+            radiusPx = decorRadius,
+            headingDegrees = headingDegrees,
+            rangeMeters = rangeMeters,
+            settings = settings,
+            targets = targets
+        )
+    }
 }
 
 /**

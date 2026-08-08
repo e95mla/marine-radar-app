@@ -24,6 +24,8 @@ fun RadarMapContainer(
     rangeMeters: Int,
     opacity: Float,
     style: MapStyle,
+    settings: com.example.marineradar.settings.RadarSettings,
+    targets: List<com.example.marineradar.radar.RadarTarget> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     when (provider) {
@@ -34,6 +36,8 @@ fun RadarMapContainer(
             rangeMeters = rangeMeters,
             opacity = opacity,
             style = style,
+            settings = settings,
+            targets = targets,
             modifier = modifier.fillMaxSize()
         )
         MapProviderType.GOOGLE_MAPS -> GoogleMapRadarView(
@@ -43,6 +47,8 @@ fun RadarMapContainer(
             rangeMeters = rangeMeters,
             opacity = opacity,
             style = style,
+            settings = settings,
+            targets = targets,
             modifier = modifier.fillMaxSize()
         )
     }

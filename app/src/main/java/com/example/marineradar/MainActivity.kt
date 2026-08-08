@@ -233,6 +233,8 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                 rangeMeters = radarControls.rangeMeters,
                                 opacity = mapOpacity,
                                 style = mapStyle,
+                                settings = settings,
+                                targets = targets,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
