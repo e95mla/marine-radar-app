@@ -25,6 +25,8 @@ data class RadarControls(
     val connected: Boolean = false,
     val powerTransmit: Boolean = false,
     val rangeMeters: Int = FurunoProtocol.WIRE_INDEX_TO_METERS[6] ?: 3704,
+    /** true medan ett räckviddsbyte är skickat men ännu inte bekräftat av radarn. */
+    val rangePending: Boolean = false,
     val gainAuto: Boolean = true,
     val gainValue: Int = 50,
     val seaAuto: Boolean = true,
@@ -268,37 +270,59 @@ class RadarCommandClient(private val network: Network? = null) {
      * radarn stod på största räckvidden och då hoppade tillbaka till minsta –
      * och vid "-" från minsta hände ingenting alls.
      */
+    private var desiredRangeIndex: Int? = null
+    private var rangeJob: Job? = null
+
+    private fun nearestRangeIndex(meters: Int): Int {
+        val order = FurunoProtocol.WIRE_INDEX_ORDER
+        return order.indices.minByOrNull { i ->
+            kotlin.math.abs((FurunoProtocol.WIRE_INDEX_TO_METERS[order[i]] ?: 0) - meters)
+        } ?: 0
+    }
+
     fun stepRange(up: Boolean) {
         val order = FurunoProtocol.WIRE_INDEX_ORDER
-        val currentMeters = _controls.value.rangeMeters
-        // Närmaste index till nuvarande räckvidd (robust även om radarn
-        // rapporterar en räckvidd som inte finns exakt i tabellen).
-        val currentIdx = order.indices.minByOrNull { i ->
-            kotlin.math.abs((FurunoProtocol.WIRE_INDEX_TO_METERS[order[i]] ?: 0) - currentMeters)
-        } ?: 0
-        val newIdx = (currentIdx + if (up) 1 else -1).coerceIn(0, order.size - 1)
-        if (newIdx == currentIdx) {
+        // Stega från det SENAST ÖNSKADE steget, inte från det radarn hunnit
+        // bekräfta. Radarn tar ~1-2 s på sig, och utan detta "åt" appen alla
+        // snabba tryck efter det första – man kunde bara byta ett steg i taget.
+        val baseIdx = desiredRangeIndex ?: nearestRangeIndex(_controls.value.rangeMeters)
+        val newIdx = (baseIdx + if (up) 1 else -1).coerceIn(0, order.size - 1)
+        if (newIdx == baseIdx) {
             FileLogger.log(
                 "INFO",
-                "RadarCommandClient: räckvidd redan på ${if (up) "max" else "min"} " +
-                    "(${currentMeters} m) – inget kommando skickat"
+                "RadarCommandClient: räckvidd redan på ${if (up) "max" else "min"} – inget kommando skickat"
             )
             return
         }
+        desiredRangeIndex = newIdx
         val wireIndex = order[newIdx]
-        val meters = FurunoProtocol.WIRE_INDEX_TO_METERS[wireIndex] ?: currentMeters
-        FileLogger.log(
-            "INFO",
-            "RadarCommandClient: räckvidd ${currentMeters} m -> ${meters} m " +
-                "(wireIndex=$wireIndex, unit=0/NM, drid=0)"
-        )
-        // Optimistisk lokal uppdatering: DRS4W svarar inte alltid med $N62 på
-        // eget initiativ, och utan detta stod siffran still i UI:t även när
-        // radarn faktiskt bytte räckvidd. Bekräftelsen nedan korrigerar värdet
-        // om radarn valde något annat.
-        _controls.value = _controls.value.copy(rangeMeters = meters)
-        sendCommand('S', 0x62, listOf(wireIndex, 0, 0))
-        verifyAfterSet(0x62, "räckvidd")
+        val meters = FurunoProtocol.WIRE_INDEX_TO_METERS[wireIndex] ?: _controls.value.rangeMeters
+        // Optimistisk uppdatering + "väntar"-flagga så UI:t kan visa att
+        // kommandot är på väg istället för att kännas dött.
+        _controls.value = _controls.value.copy(rangeMeters = meters, rangePending = true)
+
+        rangeJob?.cancel()
+        rangeJob = CoroutineScope(Dispatchers.IO).launch {
+            // Samla ihop snabba tryck till ETT kommando – radarn hinner
+            // annars inte med och hoppar fel.
+            delay(300)
+            val idx = desiredRangeIndex ?: return@launch
+            val wi = order[idx]
+            val m = FurunoProtocol.WIRE_INDEX_TO_METERS[wi] ?: meters
+            FileLogger.log("INFO", "RadarCommandClient: sätter räckvidd $m m (wireIndex=$wi)")
+            sendCommand('S', 0x62, listOf(wi, 0, 0))
+            delay(700)
+            sendCommand('R', 0x62, emptyList())
+            delay(4_000)
+            if (_controls.value.rangePending) {
+                FileLogger.log(
+                    "WARN",
+                    "RadarCommandClient: ingen bekräftelse på räckviddsbytet inom 5 s – släpper väntläget"
+                )
+                _controls.value = _controls.value.copy(rangePending = false)
+                desiredRangeIndex = null
+            }
+        }
     }
 
     fun setGain(auto: Boolean, value: Int) {
@@ -376,7 +400,8 @@ class RadarCommandClient(private val network: Network? = null) {
                         "INFO",
                         "RadarCommandClient: bekräftad räckvidd=$meters m (wireIndex=$wireIndex)"
                     )
-                    _controls.value = _controls.value.copy(rangeMeters = meters)
+                    _controls.value = _controls.value.copy(rangeMeters = meters, rangePending = false)
+                    desiredRangeIndex = null
                 } else {
                     FileLogger.log(
                         "WARN",

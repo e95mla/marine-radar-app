@@ -14,6 +14,7 @@ import com.example.marineradar.network.RadarInfo
 import com.example.marineradar.network.RadarUdpClient
 import com.example.marineradar.network.RadarWifiManager
 import com.example.marineradar.network.WifiConnectionState
+import com.example.marineradar.settings.RadarSettings
 import com.example.marineradar.settings.SettingsStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +50,50 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val wifiManager = RadarWifiManager(application)
     val settings = SettingsStore(application)
 
+    /**
+     * Alla användarinställningar i ett objekt, laddade från disk vid start
+     * och sparade vid varje ändring – se [RadarSettings]/[SettingsStore].
+     */
+    private val _uiSettings = MutableStateFlow(settings.load())
+    val uiSettings: StateFlow<RadarSettings> = _uiSettings.asStateFlow()
+
+    private val alarmPlayer = AlarmPlayer(application)
+
+    /** Mål-id som redan larmat, så att larmet bara ljuder när ett NYTT mål triggar. */
+    private val alarmedIds = mutableSetOf<Int>()
+
+    private val _alarmActive = MutableStateFlow(false)
+    val alarmActive: StateFlow<Boolean> = _alarmActive.asStateFlow()
+
+    /**
+     * Ändrar en eller flera inställningar och sparar dem direkt. Alla
+     * sidoeffekter (detektionströskel, av/på för målspårning) hanteras här
+     * så att vyerna bara behöver beskriva ÖNSKAT läge.
+     */
+    fun updateSettings(transform: (RadarSettings) -> RadarSettings) {
+        val updated = transform(_uiSettings.value)
+        _uiSettings.value = updated
+        settings.save(updated)
+        tracker.threshold = updated.detectThreshold
+        if (!updated.targetTrackingEnabled) {
+            tracker.reset()
+            _targets.value = emptyList()
+            _alarmActive.value = false
+            alarmedIds.clear()
+        }
+        // Spegelflöden som kartvyerna redan lyssnar på.
+        _mapProvider.value = runCatching { MapProviderType.valueOf(updated.mapProviderName) }
+            .getOrDefault(MapProviderType.OPENSTREETMAP)
+        _radarOpacity.value = updated.radarOpacity
+        _mapDarkStyle.value = updated.mapDarkStyle
+    }
+
+    /** Återställer alla inställningar till fabriksläge. */
+    fun resetSettings() {
+        settings.clear()
+        updateSettings { RadarSettings() }
+    }
+
     private val _appState = MutableStateFlow<RadarAppState>(RadarAppState.Disconnected)
     val appState: StateFlow<RadarAppState> = _appState.asStateFlow()
 
@@ -77,16 +122,15 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     val showMapOverlay: StateFlow<Boolean> = _showMapOverlay.asStateFlow()
 
     private val _mapProvider = MutableStateFlow(
-        settings.getMapProviderName()?.let { name ->
-            runCatching { MapProviderType.valueOf(name) }.getOrNull()
-        } ?: MapProviderType.OPENSTREETMAP
+        runCatching { MapProviderType.valueOf(settings.load().mapProviderName) }
+            .getOrDefault(MapProviderType.OPENSTREETMAP)
     )
     val mapProvider: StateFlow<MapProviderType> = _mapProvider.asStateFlow()
 
-    private val _radarOpacity = MutableStateFlow(settings.getRadarOpacity())
+    private val _radarOpacity = MutableStateFlow(settings.load().radarOpacity)
     val radarOpacity: StateFlow<Float> = _radarOpacity.asStateFlow()
 
-    private val _mapDarkStyle = MutableStateFlow(settings.getMapDarkStyle())
+    private val _mapDarkStyle = MutableStateFlow(settings.load().mapDarkStyle)
     val mapDarkStyle: StateFlow<Boolean> = _mapDarkStyle.asStateFlow()
 
     private val _boatLocation = MutableStateFlow<com.google.android.gms.maps.model.LatLng?>(null)
@@ -104,20 +148,13 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------------
     // Målspårning (MARPA-lite) – härleds ur radarbilden, se [TargetTracker]
     // -------------------------------------------------------------------
-    private val tracker = TargetTracker()
+    private val tracker = TargetTracker().apply { threshold = settings.load().detectThreshold }
 
     private val _targets = MutableStateFlow<List<RadarTarget>>(emptyList())
     val targets: StateFlow<List<RadarTarget>> = _targets.asStateFlow()
 
-    private val _targetTrackingEnabled = MutableStateFlow(true)
-    val targetTrackingEnabled: StateFlow<Boolean> = _targetTrackingEnabled.asStateFlow()
-
     fun setTargetTrackingEnabled(enabled: Boolean) {
-        _targetTrackingEnabled.value = enabled
-        if (!enabled) {
-            tracker.reset()
-            _targets.value = emptyList()
-        }
+        updateSettings { it.copy(targetTrackingEnabled = enabled) }
     }
 
     /**
@@ -143,19 +180,15 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setMapProvider(provider: MapProviderType) {
-        _mapProvider.value = provider
-        settings.saveMapProviderName(provider.name)
+        updateSettings { it.copy(mapProviderName = provider.name) }
     }
 
     fun setRadarOpacity(value: Float) {
-        val clamped = value.coerceIn(0f, 1f)
-        _radarOpacity.value = clamped
-        settings.saveRadarOpacity(clamped)
+        updateSettings { it.copy(radarOpacity = value.coerceIn(0f, 1f)) }
     }
 
     fun setMapDarkStyle(dark: Boolean) {
-        _mapDarkStyle.value = dark
-        settings.saveMapDarkStyle(dark)
+        updateSettings { it.copy(mapDarkStyle = dark) }
     }
 
     /**
@@ -202,7 +235,7 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         reset()
-        settings.save(ssid, password)
+        updateSettings { it.copy(ssid = ssid, password = password) }
         FileLogger.log("INFO", "$TAG: Ansluter till WiFi '$ssid'")
         _appState.value = RadarAppState.ConnectingWifi
 
@@ -345,10 +378,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         for (spoke in spokes) {
                             renderer.drawSpoke(spoke.angle, spoke.intensities)
-                            if (_targetTrackingEnabled.value) {
+                            if (_uiSettings.value.targetTrackingEnabled) {
                                 tracker.setRange(_radarControls.value.rangeMeters)
                                 tracker.onSpoke(spoke.angle, spoke.intensities)?.let { list ->
                                     _targets.value = list
+                                    evaluateAlarms(list)
                                 }
                             }
                         }
@@ -374,6 +408,49 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             client.connectAndListen(radarIp)
         }
+        if (_uiSettings.value.autoTransmitOnConnect) {
+            viewModelScope.launch {
+                // Vänta tills kanalen faktiskt är uppe innan TX begärs.
+                repeat(30) {
+                    if (_radarControls.value.connected) return@repeat
+                    delay(500)
+                }
+                if (_radarControls.value.connected && !_radarControls.value.powerTransmit) {
+                    FileLogger.log("INFO", "$TAG: auto-transmit påslaget – begär TRANSMIT")
+                    setPower(true)
+                }
+            }
+        }
+    }
+
+    /**
+     * Kollar vaktzon och CPA-gränser mot de senaste målen och ljuder larm
+     * när ett NYTT mål bryter mot en gräns (kanttriggat, så att larmet inte
+     * tjuter oavbrutet för samma mål).
+     */
+    private fun evaluateAlarms(list: List<RadarTarget>) {
+        val s = _uiSettings.value
+        val triggering = list.filter { t ->
+            val cpaHit = s.cpaAlarmEnabled && t.isDangerous(s.cpaLimitMeters, s.tcpaLimitSeconds)
+            val guardHit = s.guardEnabled && inGuardZone(t, s)
+            cpaHit || guardHit
+        }
+        val ids = triggering.map { it.id }.toSet()
+        val fresh = ids - alarmedIds
+        alarmedIds.retainAll(ids)
+        alarmedIds.addAll(ids)
+        _alarmActive.value = ids.isNotEmpty()
+        if (fresh.isNotEmpty() && (s.alarmSound || s.alarmVibrate)) {
+            FileLogger.log("WARN", "$TAG: LARM – mål ${fresh.joinToString()} bryter vaktzon/CPA-gräns")
+            alarmPlayer.alert(s.alarmSound, s.alarmVibrate)
+        }
+    }
+
+    private fun inGuardZone(t: RadarTarget, s: RadarSettings): Boolean {
+        if (t.rangeMeters < s.guardInnerMeters || t.rangeMeters > s.guardOuterMeters) return false
+        if (s.guardWidthDeg >= 359.5f) return true
+        val rel = ((t.bearingDegrees - s.guardStartDeg) % 360f + 360f) % 360f
+        return rel <= s.guardWidthDeg
     }
 
     fun setPower(transmit: Boolean) = launchCommand {
@@ -426,6 +503,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         _courseOverGround.value = null
         tracker.reset()
         _targets.value = emptyList()
+        _alarmActive.value = false
+        alarmedIds.clear()
     }
 
     override fun onCleared() {
@@ -433,5 +512,6 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         commandClient?.close()
         emulator?.stop()
         locationProvider?.stop()
+        alarmPlayer.release()
     }
 }

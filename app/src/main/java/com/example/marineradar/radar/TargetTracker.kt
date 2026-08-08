@@ -28,8 +28,11 @@ import kotlin.math.sqrt
 class TargetTracker {
 
     companion object {
-        /** Ekostyrka (0-255) som krävs för att en cell ska räknas som mål. */
+        /** Standardtröskel för ekostyrka (0-255); kan ändras i inställningarna. */
         const val DETECT_THRESHOLD = 110
+
+        /** Antal historikpunkter som sparas per spår ("trails"). */
+        const val TRAIL_LENGTH = 12
 
         const val BEARING_BINS = 360
         const val RANGE_BINS = 128
@@ -57,6 +60,16 @@ class TargetTracker {
     private val tracks = mutableListOf<MutableTrack>()
 
     private var rangeMeters: Int = 3704
+
+    /** Detektionströskel, styrbar från inställningarna. */
+    var threshold: Int = DETECT_THRESHOLD
+        set(value) {
+            val v = value.coerceIn(40, 250)
+            if (v != field) {
+                field = v
+                reset()
+            }
+        }
 
     fun setRange(meters: Int) {
         if (meters > 0 && meters != rangeMeters) {
@@ -131,7 +144,7 @@ class TargetTracker {
         val stack = ArrayDeque<Int>()
 
         for (start in grid.indices) {
-            if (visited[start] || grid[start] < DETECT_THRESHOLD) continue
+            if (visited[start] || grid[start] < threshold) continue
             stack.clear()
             stack.addLast(start)
             visited[start] = true
@@ -161,7 +174,7 @@ class TargetTracker {
                     val nr = r + dr
                     if (nr < 0 || nr >= RANGE_BINS) continue
                     val nidx = nb * RANGE_BINS + nr
-                    if (!visited[nidx] && grid[nidx] >= DETECT_THRESHOLD) {
+                    if (!visited[nidx] && grid[nidx] >= threshold) {
                         visited[nidx] = true
                         stack.addLast(nidx)
                     }
@@ -231,6 +244,9 @@ class TargetTracker {
         var hits = 1
         var misses = 0
 
+        /** Historik för "trails" – senaste positionerna, äldst först. */
+        val trail = ArrayDeque<FloatArray>().apply { addLast(floatArrayOf(x, y)) }
+
         fun update(nx: Float, ny: Float, ncells: Int, nstrength: Int, now: Long) {
             val dt = ((now - lastSeenMs) / 1000f).coerceIn(0.3f, 10f)
             val px = x + vx * dt
@@ -246,6 +262,8 @@ class TargetTracker {
             lastSeenMs = now
             hits++
             misses = 0
+            trail.addLast(floatArrayOf(x, y))
+            while (trail.size > TRAIL_LENGTH) trail.removeFirst()
         }
 
         fun toTarget(): RadarTarget {
@@ -282,7 +300,8 @@ class TargetTracker {
                 strength = strength,
                 sizeCells = cells,
                 relX = x,
-                relY = y
+                relY = y,
+                trail = trail.map { it.copyOf() }
             )
         }
     }
@@ -303,11 +322,17 @@ data class RadarTarget(
     val strength: Int,
     val sizeCells: Int,
     val relX: Float,
-    val relY: Float
+    val relY: Float,
+    /** Tidigare positioner (relativa meter, äldst först) för spårvisning. */
+    val trail: List<FloatArray> = emptyList()
 ) {
     val rangeNm: Float get() = rangeMeters / 1852f
 
-    /** Kollisionsrisk: passerar nära och gör det inom rimlig tid. */
+    /** Kollisionsrisk med appens standardgränser (0,25 NM / 10 min). */
     val isDangerous: Boolean
-        get() = tcpaSeconds > 1f && tcpaSeconds < 600f && cpaMeters < 300f
+        get() = isDangerous(463f, 600f)
+
+    /** Kollisionsrisk med användarens egna CPA/TCPA-gränser från inställningarna. */
+    fun isDangerous(cpaLimitMeters: Float, tcpaLimitSeconds: Float): Boolean =
+        tcpaSeconds > 1f && tcpaSeconds < tcpaLimitSeconds && cpaMeters < cpaLimitMeters
 }

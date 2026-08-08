@@ -86,7 +86,6 @@ fun RadarControlPanel(
                     pendingPower = next
                     onPowerToggle(next)
                 },
-                enabled = controls.connected,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 if (pendingPower != null) {
@@ -122,9 +121,9 @@ fun RadarControlPanel(
             }
         }
 
-        ControlSliderRow("Gain", controls.gainAuto, controls.gainValue, controls.connected, onGainChange)
-        ControlSliderRow("Sea", controls.seaAuto, controls.seaValue, controls.connected, onSeaChange)
-        ControlSliderRow("Rain", controls.rainAuto, controls.rainValue, controls.connected, onRainChange)
+        ControlSliderRow("Gain", controls.gainAuto, controls.gainValue, onGainChange)
+        ControlSliderRow("Sea", controls.seaAuto, controls.seaValue, onSeaChange)
+        ControlSliderRow("Rain", controls.rainAuto, controls.rainValue, onRainChange)
     }
 }
 
@@ -133,7 +132,6 @@ private fun ControlSliderRow(
     label: String,
     auto: Boolean,
     value: Int,
-    enabled: Boolean,
     onChange: (Boolean, Int) -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -161,7 +159,6 @@ private fun ControlSliderRow(
                 Switch(
                     checked = auto,
                     onCheckedChange = { onChange(it, value) },
-                    enabled = enabled,
                     colors = SwitchDefaults.colors()
                 )
             }
@@ -170,7 +167,7 @@ private fun ControlSliderRow(
             value = value.toFloat(),
             onValueChange = { onChange(false, it.roundToInt()) },
             valueRange = 0f..100f,
-            enabled = enabled && !auto,
+            enabled = !auto,
             modifier = Modifier.fillMaxWidth(),
             colors = SliderDefaults.colors()
         )

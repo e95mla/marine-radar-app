@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,7 +43,9 @@ fun ExpandableBottomBar(
     expandedPanel: ExpandedPanel,
     onExpandedPanelChange: (ExpandedPanel) -> Unit,
     rangeMeters: Int,
+    rangePending: Boolean,
     onRangeStep: (Boolean) -> Unit,
+    onOpenSettings: (() -> Unit)? = null,
     radarControls: RadarControls,
     onPowerToggle: (Boolean) -> Unit,
     onGainChange: (Boolean, Int) -> Unit,
@@ -106,13 +109,33 @@ fun ExpandableBottomBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Räckvidd – ALLTID synlig, oavsett vilken panel som är öppen.
+                // Knapparna är ALDRIG utgråade – man ska kunna trycka flera
+                // steg i rad utan att vänta. Kommandona samlas ihop och
+                // skickas som ett, och punkten visar att radarn ännu inte
+                // bekräftat den nya räckvidden.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { onRangeStep(false) }) { Text("－") }
-                    Text(
-                        formatRangeMeters(rangeMeters),
-                        style = MaterialTheme.typography.bodyMedium,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 8.dp)
-                    )
+                    ) {
+                        Text(
+                            formatRangeMeters(rangeMeters),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (rangePending) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                        if (rangePending) {
+                            Spacer(Modifier.width(6.dp))
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    }
                     OutlinedButton(onClick = { onRangeStep(true) }) { Text("＋") }
                 }
 
@@ -127,6 +150,10 @@ fun ExpandableBottomBar(
                                 )
                             }
                         )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    if (onOpenSettings != null) {
+                        SquareIconToggle(icon = "⚙", selected = false, onClick = onOpenSettings)
                         Spacer(Modifier.width(8.dp))
                     }
                     SquareIconToggle(

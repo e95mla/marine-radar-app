@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,26 +28,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.marineradar.radar.PpiRenderer
+import com.example.marineradar.settings.RadarSettings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.atan2
+import kotlin.math.hypot
 
 /**
  * Visar [PpiRenderer]s bitmap som en kvadrat centrerad i tillgängligt
- * utrymme (så bilden alltid fyller antingen bredden eller höjden helt,
- * utan onödigt tomrum), med pinch-to-zoom och pan. [onToggleFullscreen]
- * anropas när användaren trycker på helskärmsknappen – MainActivity
- * ansvarar för att faktiskt växla layouten.
+ * utrymme, med pinch-to-zoom, pan och (nytt) en markör: ett tryck i bilden
+ * sätter EBL/VRM, dvs. visar bäring och avstånd till den punkten. Dubbeltryck
+ * nollställer både markör och zoom.
  *
- * Bitmappen ritas kontinuerligt i bakgrunden (en radiell linje per
- * mottagen spoke) – den här composabeln samplar den med en fast, låg
- * bildfrekvens (~15 fps) istället för att recomponera på varje enskild
- * spoke.
+ * North-up löses genom att rotera HELA det kvadratiska innehållet (bitmap +
+ * överlägg) med kompasskursen – radarn skickar bilden fören-upp.
  */
 @Composable
 fun PpiView(
     renderer: PpiRenderer?,
+    settings: RadarSettings,
     modifier: Modifier = Modifier,
     targets: List<com.example.marineradar.radar.RadarTarget> = emptyList(),
     rangeMeters: Int = 3704,
@@ -57,6 +61,8 @@ fun PpiView(
     var frame by remember { mutableIntStateOf(0) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var cursor by remember { mutableStateOf<Offset?>(null) }
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
     LaunchedEffect(renderer) {
         if (renderer == null) return@LaunchedEffect
@@ -66,10 +72,13 @@ fun PpiView(
         }
     }
 
+    val rotation = if (settings.northUp) -headingDegrees else 0f
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onSizeChanged { boxSize = it }
             .pointerInput(Unit) {
                 kotlinx.coroutines.coroutineScope {
                     launch {
@@ -79,10 +88,14 @@ fun PpiView(
                         }
                     }
                     launch {
-                        detectTapGestures(onDoubleTap = {
-                            scale = 1f
-                            offset = Offset.Zero
-                        })
+                        detectTapGestures(
+                            onTap = { cursor = it },
+                            onDoubleTap = {
+                                scale = 1f
+                                offset = Offset.Zero
+                                cursor = null
+                            }
+                        )
                     }
                 }
             },
@@ -96,7 +109,8 @@ fun PpiView(
                         scaleX = scale,
                         scaleY = scale,
                         translationX = offset.x,
-                        translationY = offset.y
+                        translationY = offset.y,
+                        rotationZ = rotation
                     )
             ) {
                 key(frame) {
@@ -106,19 +120,51 @@ fun PpiView(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-                // Målspårning (MARPA-lite) ritas ovanpå ekobilden.
                 TargetOverlay(
                     targets = targets,
                     rangeMeters = rangeMeters,
                     headingDegrees = headingDegrees,
+                    settings = settings,
                     modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // EBL/VRM-avläsning för markören.
+        val c = cursor
+        if (c != null && boxSize.width > 0) {
+            val cx = boxSize.width / 2f
+            val cy = boxSize.height / 2f
+            val side = minOf(boxSize.width, boxSize.height).toFloat()
+            val maxRadius = side / 2f - 6f
+            // Kompensera för zoom/pan så avläsningen stämmer även inzoomat.
+            val dx = (c.x - cx - offset.x) / scale
+            val dy = (c.y - cy - offset.y) / scale
+            val pixelRange = hypot(dx, dy)
+            val meters = pixelRange / maxRadius * rangeMeters
+            var brg = Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble())).toFloat()
+            brg = (brg % 360f + 360f) % 360f
+            if (settings.northUp) brg = (brg % 360f + 360f) % 360f else brg = ((brg + headingDegrees) % 360f + 360f) % 360f
+
+            Surface(
+                color = Color.Black.copy(alpha = 0.65f),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 64.dp, end = 8.dp)
+            ) {
+                Text(
+                    "EBL %03.0f°  VRM %.2f NM".format(brg, meters / 1852f),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
         }
 
         if (scale > 1.05f) {
             Text(
-                text = "${"%.1f".format(scale)}× – dubbeltryck ⤡ för att återställa",
+                text = "${"%.1f".format(scale)}× – dubbeltryck för att återställa",
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier

@@ -34,6 +34,8 @@ fun RadarDataBar(
     rangeMeters: Int,
     targetCount: Int,
     dangerCount: Int,
+    northUp: Boolean = false,
+    alarmActive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -46,10 +48,14 @@ fun RadarDataBar(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (alarmActive) {
+                DataField("LARM", "!", DangerRed)
+            }
             DataField("HDG", "%03.0f°".format(headingDegrees))
             DataField("COG", courseOverGround?.let { "%03.0f°".format(it) } ?: "––")
             DataField("SOG", speedKnots?.let { "%.1f kn".format(it) } ?: "––")
             DataField("RNG", formatRange(rangeMeters))
+            DataField("LÄGE", if (northUp) "N-UP" else "H-UP", AccentAmber)
             DataField(
                 "MÅL",
                 if (dangerCount > 0) "$targetCount (${dangerCount}!)" else "$targetCount",

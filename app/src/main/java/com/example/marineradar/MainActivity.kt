@@ -26,6 +26,7 @@ import com.example.marineradar.ui.PpiView
 import com.example.marineradar.ui.RadarDataBar
 import com.example.marineradar.ui.TargetListPanel
 import com.example.marineradar.ui.RadarMapContainer
+import com.example.marineradar.ui.SettingsScreen
 import com.example.marineradar.ui.SquareIconToggle
 
 class MainActivity : ComponentActivity() {
@@ -73,9 +74,18 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val speedKnots by viewModel.speedKnots.collectAsState()
     val courseOverGround by viewModel.courseOverGround.collectAsState()
     val targets by viewModel.targets.collectAsState()
+    val settings by viewModel.uiSettings.collectAsState()
+    val alarmActive by viewModel.alarmActive.collectAsState()
 
-    var ssid by remember { mutableStateOf(viewModel.settings.getSsid()) }
-    var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
+    // Håller skärmen tänd medan radarn strömmar, om användaren valt det.
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(settings.keepScreenOn, appState) {
+        view.keepScreenOn = settings.keepScreenOn && appState is RadarAppState.Streaming
+        onDispose { view.keepScreenOn = false }
+    }
+
+    var ssid by remember { mutableStateOf(settings.ssid) }
+    var password by remember { mutableStateOf(settings.password) }
     var tab by remember { mutableStateOf(0) }
     var fullscreen by remember { mutableStateOf(false) }
     var expandedPanel by remember { mutableStateOf(ExpandedPanel.NONE) }
@@ -92,7 +102,8 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
                         Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
-                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Felsökning") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Inställningar") })
+                        Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Felsökning") })
                     }
                     TextButton(onClick = onExit) {
                         Text("✕ Avsluta", color = MaterialTheme.colorScheme.error)
@@ -101,6 +112,16 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
             }
 
             if (tab == 1 && !fullscreen) {
+                SettingsScreen(
+                    settings = settings,
+                    onChange = { transform -> viewModel.updateSettings(transform) },
+                    onResetSettings = { viewModel.resetSettings() },
+                    modifier = Modifier.weight(1f)
+                )
+                return@Column
+            }
+
+            if (tab == 2 && !fullscreen) {
                 DebugScreen(
                     portScanner = network?.let { RadarPortScanner(it) },
                     passiveScanner = network?.let { RadarPassiveScanner(it) },
@@ -145,7 +166,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             Spacer(Modifier.height(12.dp))
                             Text(state.message, color = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = { tab = 1 }) {
+                            TextButton(onClick = { tab = 2 }) {
                                 Text("Visa felsökningslogg")
                             }
                         }
@@ -173,6 +194,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                         } else {
                             PpiView(
                                 renderer = ppiRenderer,
+                                settings = settings,
                                 targets = targets,
                                 rangeMeters = radarControls.rangeMeters,
                                 headingDegrees = headingDegrees,
@@ -223,15 +245,23 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                     .padding(start = 8.dp, top = 44.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                RadarDataBar(
-                                    headingDegrees = headingDegrees,
-                                    courseOverGround = courseOverGround,
-                                    speedKnots = speedKnots,
-                                    rangeMeters = radarControls.rangeMeters,
-                                    targetCount = targets.size,
-                                    dangerCount = targets.count { it.isDangerous }
-                                )
-                                TargetListPanel(targets = targets)
+                                if (settings.showDataBar) {
+                                    RadarDataBar(
+                                        headingDegrees = headingDegrees,
+                                        courseOverGround = courseOverGround,
+                                        speedKnots = speedKnots,
+                                        rangeMeters = radarControls.rangeMeters,
+                                        targetCount = targets.size,
+                                        dangerCount = targets.count {
+                                            it.isDangerous(settings.cpaLimitMeters, settings.tcpaLimitSeconds)
+                                        },
+                                        northUp = settings.northUp,
+                                        alarmActive = alarmActive
+                                    )
+                                }
+                                if (settings.showTargetList) {
+                                    TargetListPanel(targets = targets)
+                                }
                             }
                         }
 
@@ -273,7 +303,9 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             expandedPanel = expandedPanel,
                             onExpandedPanelChange = { expandedPanel = it },
                             rangeMeters = radarControls.rangeMeters,
+                            rangePending = radarControls.rangePending,
                             onRangeStep = { viewModel.stepRange(it) },
+                            onOpenSettings = { fullscreen = false; tab = 1 },
                             radarControls = radarControls,
                             onPowerToggle = { viewModel.setPower(it) },
                             onGainChange = { auto, value -> viewModel.setGain(auto, value) },
