@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import com.example.marineradar.map.MapStyle
 import com.example.marineradar.radar.PpiRenderer
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
@@ -99,12 +100,17 @@ fun GoogleMapRadarView(
         val loc = boatLocation
         if (loc != null) {
             val projection = cameraPositionState.projection
-            val screenPoint = remember(projection, loc, frame) {
+            val screenPoint = remember(projection, loc, frame, cameraPositionState.position) {
                 try { projection?.toScreenLocation(loc) } catch (_: Exception) { null }
             }
-            val metersPerPixel = remember(cameraPositionState.position.zoom, loc) {
-                (156543.03392 * cos(Math.toRadians(loc.latitude)) /
-                    Math.pow(2.0, cameraPositionState.position.zoom.toDouble())).toFloat()
+            // 156543-formeln ger meter per *karta*-pixel (256 px-kakel, dvs dp
+            // på Android). Skärmpixlar är density gånger fler – utan den
+            // korrigeringen blev ringarna för små och hamnade fel i förhållande
+            // till ekobilden vid zoom.
+            val density = LocalDensity.current.density
+            val metersPerPixel = remember(cameraPositionState.position.zoom, loc, density) {
+                ((156543.03392 * cos(Math.toRadians(loc.latitude)) /
+                    Math.pow(2.0, cameraPositionState.position.zoom.toDouble())) / density).toFloat()
             }
             if (screenPoint != null && metersPerPixel > 0f) {
                 MapRadarDecor(
