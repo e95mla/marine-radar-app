@@ -22,7 +22,12 @@ data class RadarSettings(
     val showRangeRings: Boolean = true,
     val showHeadingLine: Boolean = true,
     val showDataBar: Boolean = true,
-    val showTargetList: Boolean = true,
+    /** Permanent mållista uppe i bilden (av som standard – den tar mycket plats). */
+    val showTargetList: Boolean = false,
+    /** Visa varningsrutan med mål, bäring och avstånd automatiskt när larmet går. */
+    val showAlarmPopup: Boolean = true,
+    /** Skriv målnummer och fart bredvid varje mål i radarbilden. */
+    val showTargetLabels: Boolean = true,
     /** Håller skärmen tänd så länge radarn strömmar. */
     val keepScreenOn: Boolean = true,
 

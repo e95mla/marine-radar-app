@@ -128,30 +128,83 @@ fun TargetOverlay(
                 }
             }
 
-            drawCircle(color = color, radius = 12f, center = Offset(px, py), style = Stroke(width = 2.5f))
-
             val course = t.courseDegrees
             val speed = t.speedKnots
+
+            // Fartygssymbol: en spets som pekar åt målets kurs när kursen är
+            // känd, annars en neutral ring. Farliga mål fylls i så de syns
+            // direkt även i en rörig ekobild.
+            if (course != null) {
+                val rad = Math.toRadians(course.toDouble())
+                val dirX = sin(rad).toFloat()
+                val dirY = -cos(rad).toFloat()
+                val perpX = -dirY
+                val perpY = dirX
+                val len = 13f
+                val wid = 6.5f
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(px + dirX * len, py + dirY * len)
+                    lineTo(px - dirX * len * 0.6f + perpX * wid, py - dirY * len * 0.6f + perpY * wid)
+                    lineTo(px - dirX * len * 0.35f, py - dirY * len * 0.35f)
+                    lineTo(px - dirX * len * 0.6f - perpX * wid, py - dirY * len * 0.6f - perpY * wid)
+                    close()
+                }
+                if (dangerous) {
+                    drawPath(path, color = color.copy(alpha = 0.85f))
+                } else {
+                    drawPath(path, color = color.copy(alpha = 0.30f))
+                    drawPath(path, color = color, style = Stroke(width = 2f))
+                }
+            } else {
+                drawCircle(color = color, radius = 9f, center = Offset(px, py), style = Stroke(width = 2.5f))
+            }
+
+            if (dangerous) {
+                // Extra larmring runt mål som bryter CPA/TCPA-gränsen.
+                drawCircle(color = color, radius = 18f, center = Offset(px, py), style = Stroke(width = 1.5f))
+            }
+
             if (course != null && speed != null && speed > 0.2f) {
                 val meters = speed / 1.94384f * 60f * settings.vectorMinutes
                 val rad = Math.toRadians(course.toDouble())
                 val ex = px + (sin(rad) * meters * scale).toFloat()
                 val ey = py - (cos(rad) * meters * scale).toFloat()
                 drawLine(color = color, start = Offset(px, py), end = Offset(ex, ey), strokeWidth = 2.5f)
+                // Pilspets i vektorns ände visar rörelseriktningen tydligt.
+                val headLen = 12f
+                for (offsetDeg in listOf(150.0, -150.0)) {
+                    val a = Math.toRadians(course.toDouble() + offsetDeg)
+                    drawLine(
+                        color = color,
+                        start = Offset(ex, ey),
+                        end = Offset(
+                            ex + (sin(a) * headLen).toFloat(),
+                            ey - (cos(a) * headLen).toFloat()
+                        ),
+                        strokeWidth = 2.5f
+                    )
+                }
             }
 
-            drawContext.canvas.nativeCanvas.apply {
-                val paint = android.graphics.Paint().apply {
-                    this.color = android.graphics.Color.argb(
-                        220,
-                        (color.red * 255).toInt(),
-                        (color.green * 255).toInt(),
-                        (color.blue * 255).toInt()
-                    )
-                    textSize = 22f
-                    isAntiAlias = true
+            if (settings.showTargetLabels) {
+                drawContext.canvas.nativeCanvas.apply {
+                    val paint = android.graphics.Paint().apply {
+                        this.color = android.graphics.Color.argb(
+                            230,
+                            (color.red * 255).toInt(),
+                            (color.green * 255).toInt(),
+                            (color.blue * 255).toInt()
+                        )
+                        textSize = 20f
+                        isAntiAlias = true
+                    }
+                    val label = if (speed != null && speed > 0.2f) {
+                        "#${t.id} %.1fkn".format(speed)
+                    } else {
+                        "#${t.id}"
+                    }
+                    drawText(label, px + 16f, py - 12f, paint)
                 }
-                drawText("#${t.id}", px + 15f, py - 12f, paint)
             }
         }
     }

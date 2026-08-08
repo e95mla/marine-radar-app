@@ -47,6 +47,7 @@ fun SettingsScreen(
     settings: RadarSettings,
     onChange: ((RadarSettings) -> RadarSettings) -> Unit,
     onResetSettings: () -> Unit,
+    onOpenDebug: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var ssid by remember(settings.ssid) { mutableStateOf(settings.ssid) }
@@ -96,9 +97,21 @@ fun SettingsScreen(
         SettingSwitch("Navigationsrad", "HDG/COG/SOG/räckvidd överst i bilden.", settings.showDataBar) { v ->
             onChange { it.copy(showDataBar = v) }
         }
-        SettingSwitch("Mållista", "Lista med de närmaste spårade målen.", settings.showTargetList) { v ->
-            onChange { it.copy(showTargetList = v) }
-        }
+        SettingSwitch(
+            "Mållista alltid synlig",
+            "Liten lista med de närmaste målen uppe i bilden.",
+            settings.showTargetList
+        ) { v -> onChange { it.copy(showTargetList = v) } }
+        SettingSwitch(
+            "Varningsruta vid larm",
+            "Visar bäring, avstånd och CPA för farliga mål när larmet går. Stäng av om du hellre bara vill ha markeringarna i radarbilden.",
+            settings.showAlarmPopup
+        ) { v -> onChange { it.copy(showAlarmPopup = v) } }
+        SettingSwitch(
+            "Måltexter i bilden",
+            "Målnummer och fart bredvid varje mål.",
+            settings.showTargetLabels
+        ) { v -> onChange { it.copy(showTargetLabels = v) } }
         SettingSwitch("Håll skärmen tänd", "Skärmen släcks inte medan radarn strömmar.", settings.keepScreenOn) { v ->
             onChange { it.copy(keepScreenOn = v) }
         }
@@ -217,6 +230,13 @@ fun SettingsScreen(
             "Loggar även paketnivå – mycket data, använd bara vid felsökning.",
             settings.verboseLogging && settings.debugMode
         ) { v -> onChange { it.copy(verboseLogging = v, debugMode = it.debugMode || v) } }
+
+        if (onOpenDebug != null) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenDebug, modifier = Modifier.fillMaxWidth()) {
+                Text("Öppna felsökningsvyn")
+            }
+        }
 
         Spacer(Modifier.height(12.dp))
         OutlinedButton(onClick = onResetSettings) { Text("Återställ alla inställningar") }

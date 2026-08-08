@@ -34,6 +34,8 @@ class SettingsStore(context: Context) {
             showHeadingLine = prefs.getBoolean("show_heading_line", d.showHeadingLine),
             showDataBar = prefs.getBoolean("show_data_bar", d.showDataBar),
             showTargetList = prefs.getBoolean("show_target_list", d.showTargetList),
+            showAlarmPopup = prefs.getBoolean("show_alarm_popup", d.showAlarmPopup),
+            showTargetLabels = prefs.getBoolean("show_target_labels", d.showTargetLabels),
             keepScreenOn = prefs.getBoolean("keep_screen_on", d.keepScreenOn),
             targetTrackingEnabled = prefs.getBoolean("target_tracking", d.targetTrackingEnabled),
             detectThreshold = prefs.getInt("detect_threshold", d.detectThreshold),
@@ -72,6 +74,8 @@ class SettingsStore(context: Context) {
             .putBoolean("show_heading_line", s.showHeadingLine)
             .putBoolean("show_data_bar", s.showDataBar)
             .putBoolean("show_target_list", s.showTargetList)
+            .putBoolean("show_alarm_popup", s.showAlarmPopup)
+            .putBoolean("show_target_labels", s.showTargetLabels)
             .putBoolean("keep_screen_on", s.keepScreenOn)
             .putBoolean("target_tracking", s.targetTrackingEnabled)
             .putInt("detect_threshold", s.detectThreshold)

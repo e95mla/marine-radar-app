@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,37 +75,66 @@ private fun DataField(label: String, value: String, valueColor: Color = Color.Wh
 }
 
 /**
- * Lista över spårade mål med bäring, avstånd, kurs, fart och CPA/TCPA –
- * den information man behöver för att bedöma kollisionsrisk.
+ * Kompakt varnings-/mållista. Visas antingen permanent (inställningen
+ * "Mållista") eller bara när larmet går (inställningen "Varningsruta").
+ * Rutan hålls medvetet smal och kort så den inte lägger sig över
+ * radarbilden – bara de mest relevanta målen visas.
  */
 @Composable
-fun TargetListPanel(targets: List<RadarTarget>, modifier: Modifier = Modifier) {
-    if (targets.isEmpty()) return
+fun TargetListPanel(
+    targets: List<RadarTarget>,
+    cpaLimitMeters: Float,
+    tcpaLimitSeconds: Float,
+    alarmMode: Boolean = false,
+    maxRows: Int = 3,
+    modifier: Modifier = Modifier
+) {
+    val shown = if (alarmMode) {
+        targets.filter { it.isDangerous(cpaLimitMeters, tcpaLimitSeconds) }
+    } else {
+        targets
+    }.take(maxRows)
+    if (shown.isEmpty()) return
+
     Surface(
-        modifier = modifier,
-        color = Color.Black.copy(alpha = 0.55f),
+        modifier = modifier.widthIn(max = 260.dp),
+        color = Color.Black.copy(alpha = if (alarmMode) 0.72f else 0.55f),
         shape = MaterialTheme.shapes.small
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Text("MÅL", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
-            targets.take(5).forEach { t ->
+            Text(
+                if (alarmMode) "VARNING" else "MÅL",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (alarmMode) DangerRed else Color.White.copy(alpha = 0.6f)
+            )
+            shown.forEach { t ->
+                val dangerous = t.isDangerous(cpaLimitMeters, tcpaLimitSeconds)
                 val color = when {
-                    t.isDangerous -> DangerRed
+                    dangerous -> DangerRed
                     t.courseDegrees != null -> AccentAmber
                     else -> AccentGreen
                 }
                 Text(
                     buildString {
-                        append("#%d  %03.0f°  %.2f NM".format(t.id, t.bearingDegrees, t.rangeNm))
+                        append("#%d %03.0f° %.2fNM".format(t.id, t.bearingDegrees, t.rangeNm))
                         if (t.courseDegrees != null) {
-                            append("  →%03.0f° %.1fkn".format(t.courseDegrees, t.speedKnots ?: 0f))
+                            append(" →%03.0f° %.1fkn".format(t.courseDegrees, t.speedKnots ?: 0f))
                         }
-                        if (t.tcpaSeconds > 1f && t.tcpaSeconds < 3600f) {
-                            append("  CPA %.2fNM/%.0fmin".format(t.cpaMeters / 1852f, t.tcpaSeconds / 60f))
+                        if (dangerous) {
+                            append(" CPA %.2f/%.0fmin".format(t.cpaMeters / 1852f, t.tcpaSeconds / 60f))
                         }
                     },
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
+                    maxLines = 1,
                     color = color
+                )
+            }
+            if (targets.size > shown.size && !alarmMode) {
+                Text(
+                    "+${targets.size - shown.size} till",
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.5f)
                 )
             }
         }

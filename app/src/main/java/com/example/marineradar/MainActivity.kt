@@ -87,7 +87,10 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
 
     var ssid by remember { mutableStateOf(settings.ssid) }
     var password by remember { mutableStateOf(settings.password) }
-    var tab by remember { mutableStateOf(0) }
+    // Toppfliksraden är borta – inställningar och felsökning öppnas i stället
+    // som egna helskärmsvyer (kugghjulet i nedre listen respektive knappen
+    // längst ner i inställningarna).
+    var screen by remember { mutableStateOf(AppScreen.RADAR) }
     var fullscreen by remember { mutableStateOf(false) }
     var expandedPanel by remember { mutableStateOf(ExpandedPanel.NONE) }
 
@@ -101,45 +104,38 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     // flik 0 -> startvyn (koppla radar/emulator). Först därifrån får
     // systemet stänga appen, vilket gör en "Avsluta"-knapp i toppen onödig.
     androidx.activity.compose.BackHandler(
-        enabled = fullscreen || tab != 0 || appState !is RadarAppState.Disconnected
+        enabled = fullscreen || screen != AppScreen.RADAR || appState !is RadarAppState.Disconnected
     ) {
         when {
+            screen == AppScreen.DEBUG -> screen = AppScreen.SETTINGS
+            screen != AppScreen.RADAR -> screen = AppScreen.RADAR
             fullscreen -> fullscreen = false
-            tab != 0 -> tab = 0
             else -> viewModel.reset()
         }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // Felsökningsfliken finns bara när felsökningsläget är på – i
-            // normal drift ska den inte ta plats i toppen. Om läget stängs av
-            // medan man står på fliken flyttas man tillbaka till radarvyn.
+            // Om felsökningsläget stängs av medan felsökningsvyn är öppen
+            // stängs den automatiskt.
             LaunchedEffect(settings.debugMode) {
-                if (!settings.debugMode && tab == 2) tab = 0
+                if (!settings.debugMode && screen == AppScreen.DEBUG) screen = AppScreen.SETTINGS
             }
 
-            if (!fullscreen) {
-                TabRow(selectedTabIndex = tab, modifier = Modifier.fillMaxWidth()) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Inställningar") })
-                    if (settings.debugMode) {
-                        Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Felsökning") })
-                    }
-                }
-            }
-
-            if (tab == 1 && !fullscreen) {
+            if (screen == AppScreen.SETTINGS) {
+                OverlayHeader("Inställningar") { screen = AppScreen.RADAR }
                 SettingsScreen(
                     settings = settings,
                     onChange = { transform -> viewModel.updateSettings(transform) },
                     onResetSettings = { viewModel.resetSettings() },
+                    onOpenDebug = if (settings.debugMode) ({ screen = AppScreen.DEBUG }) else null,
                     modifier = Modifier.weight(1f)
                 )
                 return@Column
             }
 
-            if (tab == 2 && settings.debugMode && !fullscreen) {
+            if (screen == AppScreen.DEBUG && settings.debugMode) {
+                OverlayHeader("Felsökning") { screen = AppScreen.SETTINGS }
                 DebugScreen(
                     portScanner = network?.let { RadarPortScanner(it) },
                     passiveScanner = network?.let { RadarPassiveScanner(it) },
@@ -173,12 +169,28 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { viewModel.connect(ssid, password) }) {
-                            Text("Anslut")
+                        Button(
+                            onClick = { viewModel.connect(ssid, password) },
+                            modifier = Modifier.fillMaxWidth().height(52.dp)
+                        ) {
+                            Text("Anslut till radar")
                         }
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = { viewModel.connectEmulator() }) {
-                            Text("🧪 Testa med emulator (ingen radar behövs)")
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.connectEmulator() },
+                            modifier = Modifier.fillMaxWidth().height(52.dp)
+                        ) {
+                            Text("Emulatorläge")
+                        }
+                        Text(
+                            "Demoläge – ingen radar behövs",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { screen = AppScreen.SETTINGS }) {
+                            Text("Inställningar")
                         }
                         Spacer(Modifier.height(24.dp))
                         // Avsluta hör hemma här på startvyn – tillbaka-knappen
@@ -192,7 +204,9 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             Text(state.message, color = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.height(8.dp))
                             TextButton(
-                                onClick = { if (settings.debugMode) tab = 2 else tab = 1 }
+                                onClick = {
+                                    screen = if (settings.debugMode) AppScreen.DEBUG else AppScreen.SETTINGS
+                                }
                             ) {
                                 Text(
                                     if (settings.debugMode) "Visa felsökningslogg"
@@ -272,7 +286,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             Column(
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
-                                    .padding(start = 8.dp, top = 44.dp),
+                                    .padding(start = 8.dp, end = 8.dp, top = 62.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 if (settings.showDataBar) {
@@ -289,8 +303,18 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                         alarmActive = alarmActive
                                     )
                                 }
-                                if (settings.showTargetList) {
-                                    TargetListPanel(targets = targets)
+                                // Mållistan visas permanent bara om användaren
+                                // valt det – annars poppar den upp enbart vid
+                                // larm (och även det går att stänga av).
+                                val showList = settings.showTargetList ||
+                                    (settings.showAlarmPopup && alarmActive)
+                                if (showList) {
+                                    TargetListPanel(
+                                        targets = targets,
+                                        cpaLimitMeters = settings.cpaLimitMeters,
+                                        tcpaLimitSeconds = settings.tcpaLimitSeconds,
+                                        alarmMode = !settings.showTargetList && alarmActive
+                                    )
                                 }
                             }
                         }
@@ -344,7 +368,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                             rangeMeters = radarControls.rangeMeters,
                             rangePending = radarControls.rangePending,
                             onRangeStep = { viewModel.stepRange(it) },
-                            onOpenSettings = { fullscreen = false; tab = 1 },
+                            onOpenSettings = { fullscreen = false; screen = AppScreen.SETTINGS },
                             radarControls = radarControls,
                             onPowerToggle = { viewModel.setPower(it) },
                             onGainChange = { auto, value -> viewModel.setGain(auto, value) },
@@ -357,6 +381,23 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+private enum class AppScreen { RADAR, SETTINGS, DEBUG }
+
+/** Enkel rubrikrad med tillbaka-knapp för de vyer som ersatt flikarna. */
+@Composable
+private fun OverlayHeader(title: String, onBack: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) { Text("‹ Tillbaka") }
+            Spacer(Modifier.width(4.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
