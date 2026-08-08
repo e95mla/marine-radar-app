@@ -7,14 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
@@ -32,7 +30,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.Projection
 import org.osmdroid.views.overlay.Overlay
 import org.osmdroid.views.overlay.TilesOverlay
-import kotlin.math.cos
+import kotlin.math.hypot
 
 /**
  * Kartkällor per [MapStyle]. Bas är Carto (basemaps.cartocdn.com), inte
@@ -196,26 +194,25 @@ fun OsmRadarMapView(
     var decorCenter by remember { mutableStateOf<Offset?>(null) }
     var decorRadius by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(mapView, boatLocation, rangeMeters) {
-        while (true) {
-            val loc = boatLocation
-            if (loc != null) {
-                try {
-                    val point = mapView.projection.toPixels(GeoPoint(loc.latitude, loc.longitude), null)
-                    val metersPerPixelAtEquator = 1.0 / mapView.projection.metersToEquatorPixels(1f)
-                    val latitudeCorrection = cos(Math.toRadians(loc.latitude)).coerceAtLeast(0.01)
-                    val metersPerPixel = metersPerPixelAtEquator / latitudeCorrection
-                    val r = (rangeMeters / metersPerPixel).toFloat()
-                    if (r.isFinite() && r > 0f) {
-                        decorCenter = Offset(point.x.toFloat(), point.y.toFloat())
-                        decorRadius = r
-                    }
-                } catch (_: Exception) {
-                    // Ignorera enstaka projektionsfel – nästa tick försöker igen.
-                }
+    // Geometrin (mittpunkt + radie i pixlar) rapporteras från overlayets
+    // draw() så att dekoren använder EXAKT samma projektion som ekobilden,
+    // varje bildruta. Tidigare pollades projektionen var 200:e ms, vilket
+    // gjorde att ringarna halkade efter och hamnade fel vid zoom/panorering.
+    DisposableEffect(radarOverlay) {
+        radarOverlay.onGeometry = { c, r ->
+            // Skriv bara när något faktiskt ändrats – annars skulle
+            // draw -> state -> recomposition -> invalidate -> draw loopa.
+            val prev = decorCenter
+            val moved = prev == null ||
+                kotlin.math.abs(prev.x - c.x) > 0.5f ||
+                kotlin.math.abs(prev.y - c.y) > 0.5f ||
+                kotlin.math.abs(decorRadius - r) > 0.5f
+            if (moved) {
+                decorCenter = c
+                decorRadius = r
             }
-            delay(200)
         }
+        onDispose { radarOverlay.onGeometry = null }
     }
 
     Box(modifier = modifier.fillMaxSize().clipToBounds()) {
@@ -236,6 +233,18 @@ fun OsmRadarMapView(
 }
 
 /**
+ * Radarns räckvidd omräknad till skärmpixlar genom att projicera en punkt
+ * [rangeMeters] rakt österut från båten och mäta pixelavståndet. Det ger
+ * rätt skala för alla zoomnivåer och latituder utan egna Mercator-formler
+ * (som lätt blir fel åt ena eller andra hållet).
+ */
+private fun radiusInPixels(projection: Projection, center: GeoPoint, rangeMeters: Int): Float {
+    val c = projection.toPixels(center, null)
+    val edge = projection.toPixels(center.destinationPoint(rangeMeters.toDouble(), 90.0), null)
+    return hypot((edge.x - c.x).toFloat(), (edge.y - c.y).toFloat())
+}
+
+/**
  * Ritar radarbilden centrerad på båtens position, roterad efter
  * kompasskurs och skalad så att bildens radie motsvarar radarns
  * inställda räckvidd i meter – motsvarande Google Maps' GroundOverlay,
@@ -250,6 +259,9 @@ private class RadarOverlay : Overlay() {
     private var rangeMeters: Int = 1000
     private var opacity: Float = 0.6f
     private val paint = Paint().apply { isAntiAlias = true }
+
+    /** Rapporterar var/hur stor radarcirkeln ritades, i skärmpixlar. */
+    var onGeometry: ((Offset, Float) -> Unit)? = null
 
     fun update(renderer: PpiRenderer?, boatLocation: LatLng?, headingDegrees: Float, rangeMeters: Int, opacity: Float) {
         this.renderer = renderer
@@ -270,14 +282,9 @@ private class RadarOverlay : Overlay() {
             val geoPoint = GeoPoint(loc.latitude, loc.longitude)
             val centerPoint = projection.toPixels(geoPoint, null)
 
-            // Pixlar per meter vid ekvatorn för nuvarande zoom, justerat
-            // för latitud (Mercator-projektionen "sträcker ut" öst-väst-
-            // skalan längre bort från ekvatorn).
-            val metersPerPixelAtEquator = 1.0 / projection.metersToEquatorPixels(1f)
-            val latitudeCorrection = cos(Math.toRadians(loc.latitude)).coerceAtLeast(0.01)
-            val metersPerPixel = metersPerPixelAtEquator / latitudeCorrection
-            val radiusPx = (rangeMeters / metersPerPixel).toFloat()
+            val radiusPx = radiusInPixels(projection, geoPoint, rangeMeters)
             if (radiusPx <= 0f || radiusPx.isNaN() || radiusPx.isInfinite()) return
+            onGeometry?.invoke(Offset(centerPoint.x.toFloat(), centerPoint.y.toFloat()), radiusPx)
 
             val scale = (radiusPx * 2f) / bmp.width
 
