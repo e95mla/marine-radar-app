@@ -39,8 +39,19 @@ class BoatLocationProvider(private val context: Context) : SensorEventListener {
 
     private var started = false
 
+    /** Fart över grund i knop (från GPS), null tills en fix med fart finns. */
+    private val _speedKnots = MutableStateFlow<Float?>(null)
+    val speedKnots: StateFlow<Float?> = _speedKnots.asStateFlow()
+
+    /** Kurs över grund i grader (från GPS), null när båten står stilla. */
+    private val _courseOverGround = MutableStateFlow<Float?>(null)
+    val courseOverGround: StateFlow<Float?> = _courseOverGround.asStateFlow()
+
     private val locationListener = LocationListener { loc: Location ->
         _location.value = LatLng(loc.latitude, loc.longitude)
+        if (loc.hasSpeed()) _speedKnots.value = loc.speed * 1.94384f
+        // GPS-bäring är bara meningsfull när man faktiskt rör sig.
+        if (loc.hasBearing() && loc.speed > 0.3f) _courseOverGround.value = loc.bearing
     }
 
     @SuppressLint("MissingPermission") // behörighet kontrolleras/begärs redan i MainActivity

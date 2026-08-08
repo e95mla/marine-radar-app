@@ -95,16 +95,51 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     private val _headingDegrees = MutableStateFlow(0f)
     val headingDegrees: StateFlow<Float> = _headingDegrees.asStateFlow()
 
+    private val _speedKnots = MutableStateFlow<Float?>(null)
+    val speedKnots: StateFlow<Float?> = _speedKnots.asStateFlow()
+
+    private val _courseOverGround = MutableStateFlow<Float?>(null)
+    val courseOverGround: StateFlow<Float?> = _courseOverGround.asStateFlow()
+
+    // -------------------------------------------------------------------
+    // Målspårning (MARPA-lite) – härleds ur radarbilden, se [TargetTracker]
+    // -------------------------------------------------------------------
+    private val tracker = TargetTracker()
+
+    private val _targets = MutableStateFlow<List<RadarTarget>>(emptyList())
+    val targets: StateFlow<List<RadarTarget>> = _targets.asStateFlow()
+
+    private val _targetTrackingEnabled = MutableStateFlow(true)
+    val targetTrackingEnabled: StateFlow<Boolean> = _targetTrackingEnabled.asStateFlow()
+
+    fun setTargetTrackingEnabled(enabled: Boolean) {
+        _targetTrackingEnabled.value = enabled
+        if (!enabled) {
+            tracker.reset()
+            _targets.value = emptyList()
+        }
+    }
+
+    /**
+     * Startar telefonens GPS/kompass. Behövs både för kartöverlägget och
+     * för navigationsraden (HDG/COG/SOG) – radarn själv skickar ingen
+     * positions- eller kursinformation.
+     */
+    private fun ensureLocationProvider() {
+        if (locationProvider != null) return
+        FileLogger.log("INFO", "$TAG: startar GPS/kompass för kurs- och fartvisning")
+        val provider = BoatLocationProvider(getApplication())
+        locationProvider = provider
+        provider.start()
+        viewModelScope.launch { provider.location.collect { _boatLocation.value = it } }
+        viewModelScope.launch { provider.headingDegrees.collect { _headingDegrees.value = it } }
+        viewModelScope.launch { provider.speedKnots.collect { _speedKnots.value = it } }
+        viewModelScope.launch { provider.courseOverGround.collect { _courseOverGround.value = it } }
+    }
+
     fun setMapOverlayEnabled(enabled: Boolean) {
         _showMapOverlay.value = enabled
-        if (enabled && locationProvider == null) {
-            FileLogger.log("INFO", "$TAG: Kartöverlägg aktiverat, startar GPS/kompass")
-            val provider = BoatLocationProvider(getApplication())
-            locationProvider = provider
-            provider.start()
-            viewModelScope.launch { provider.location.collect { _boatLocation.value = it } }
-            viewModelScope.launch { provider.headingDegrees.collect { _headingDegrees.value = it } }
-        }
+        if (enabled) ensureLocationProvider()
     }
 
     fun setMapProvider(provider: MapProviderType) {
@@ -203,6 +238,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
             FileLogger.log("INFO", "$TAG: Hoppar över discovery, känd radar=${knownRadar.model}")
             _appState.value = RadarAppState.Streaming(knownRadar.model)
             _ppiRenderer.value = PpiRenderer()
+            tracker.reset()
+            ensureLocationProvider()
             startSpokeListener(udpClient)
             startCommandChannel(knownRadar.ipAddress)
             return
@@ -224,6 +261,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                     FileLogger.log("INFO", "$TAG: Radar hittad, modell=${info.model}")
                     _appState.value = RadarAppState.Streaming(info.model)
                     _ppiRenderer.value = PpiRenderer()
+                    tracker.reset()
+                    ensureLocationProvider()
                     startSpokeListener(udpClient)
                     startCommandChannel(info.ipAddress)
                 }
@@ -306,6 +345,12 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         for (spoke in spokes) {
                             renderer.drawSpoke(spoke.angle, spoke.intensities)
+                            if (_targetTrackingEnabled.value) {
+                                tracker.setRange(_radarControls.value.rangeMeters)
+                                tracker.onSpoke(spoke.angle, spoke.intensities)?.let { list ->
+                                    _targets.value = list
+                                }
+                            }
                         }
                     } catch (e: Exception) {
                         errorCount++
@@ -340,7 +385,11 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         // Delta-avkodningen (encoding 2/3) refererar föregående spoke – när
         // radarn går till standby måste tillståndet nollställas, annars blir
         // första varvet efter uppvaknandet brus.
-        if (!transmit) spokeDecoder?.reset()
+        if (!transmit) {
+            spokeDecoder?.reset()
+            tracker.reset()
+            _targets.value = emptyList()
+        }
         commandClient?.setPower(transmit)
     }
     fun stepRange(up: Boolean) = launchCommand { commandClient?.stepRange(up) }
@@ -373,6 +422,10 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         locationProvider = null
         _showMapOverlay.value = false
         _boatLocation.value = null
+        _speedKnots.value = null
+        _courseOverGround.value = null
+        tracker.reset()
+        _targets.value = emptyList()
     }
 
     override fun onCleared() {

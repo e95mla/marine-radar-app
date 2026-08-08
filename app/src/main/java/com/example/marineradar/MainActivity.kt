@@ -23,6 +23,8 @@ import com.example.marineradar.ui.DebugScreen
 import com.example.marineradar.ui.ExpandedPanel
 import com.example.marineradar.ui.ExpandableBottomBar
 import com.example.marineradar.ui.PpiView
+import com.example.marineradar.ui.RadarDataBar
+import com.example.marineradar.ui.TargetListPanel
 import com.example.marineradar.ui.RadarMapContainer
 import com.example.marineradar.ui.SquareIconToggle
 
@@ -68,6 +70,9 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
     val mapDarkStyle by viewModel.mapDarkStyle.collectAsState()
     val boatLocation by viewModel.boatLocation.collectAsState()
     val headingDegrees by viewModel.headingDegrees.collectAsState()
+    val speedKnots by viewModel.speedKnots.collectAsState()
+    val courseOverGround by viewModel.courseOverGround.collectAsState()
+    val targets by viewModel.targets.collectAsState()
 
     var ssid by remember { mutableStateOf(viewModel.settings.getSsid()) }
     var password by remember { mutableStateOf(viewModel.settings.getPassword()) }
@@ -168,6 +173,9 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                         } else {
                             PpiView(
                                 renderer = ppiRenderer,
+                                targets = targets,
+                                rangeMeters = radarControls.rangeMeters,
+                                headingDegrees = headingDegrees,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -202,6 +210,28 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                                         color = Color.White
                                     )
                                 }
+                            }
+                        }
+
+                        if (!fullscreen) {
+                            // Navigationsdata (HDG/COG/SOG/räckvidd/mål) +
+                            // mållista – radarn skickar ingen navdata själv,
+                            // så HDG/COG/SOG kommer från telefonens sensorer.
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(start = 8.dp, top = 44.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                RadarDataBar(
+                                    headingDegrees = headingDegrees,
+                                    courseOverGround = courseOverGround,
+                                    speedKnots = speedKnots,
+                                    rangeMeters = radarControls.rangeMeters,
+                                    targetCount = targets.size,
+                                    dangerCount = targets.count { it.isDangerous }
+                                )
+                                TargetListPanel(targets = targets)
                             }
                         }
 

@@ -48,6 +48,9 @@ import kotlinx.coroutines.launch
 fun PpiView(
     renderer: PpiRenderer?,
     modifier: Modifier = Modifier,
+    targets: List<com.example.marineradar.radar.RadarTarget> = emptyList(),
+    rangeMeters: Int = 3704,
+    headingDegrees: Float = 0f,
     isFullscreen: Boolean = false,
     onToggleFullscreen: (() -> Unit)? = null
 ) {
@@ -86,18 +89,29 @@ fun PpiView(
         contentAlignment = Alignment.Center
     ) {
         if (renderer != null) {
-            key(frame) {
-                Image(
-                    bitmap = renderer.bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offset.x,
-                            translationY = offset.y
-                        )
+            Box(
+                modifier = Modifier
+                    .aspectRatio(1f)
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    )
+            ) {
+                key(frame) {
+                    Image(
+                        bitmap = renderer.bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                // Målspårning (MARPA-lite) ritas ovanpå ekobilden.
+                TargetOverlay(
+                    targets = targets,
+                    rangeMeters = rangeMeters,
+                    headingDegrees = headingDegrees,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
