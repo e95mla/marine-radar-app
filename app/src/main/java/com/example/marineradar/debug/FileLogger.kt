@@ -20,6 +20,14 @@ object FileLogger {
     private lateinit var crashFile: File
     private var initialized = false
 
+    /**
+     * Felsökningsläget. Avstängt = bara WARN/ERROR/FATAL skrivs till disk.
+     * Rutinmässig INFO-loggning i bakgrunden hela tiden är onödigt slitage
+     * på flashminnet och gör loggen oläslig när något faktiskt går fel.
+     */
+    @Volatile
+    var debugEnabled: Boolean = false
+
     fun init(context: Context) {
         if (initialized) return
         val dir = File(context.filesDir, "logs").apply { mkdirs() }
@@ -33,6 +41,7 @@ object FileLogger {
 
     fun log(level: String, message: String, throwable: Throwable? = null) {
         if (!initialized) return
+        if (!debugEnabled && level !in ALWAYS_LOGGED_LEVELS) return
         try {
             rotateIfNeeded()
             val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
@@ -64,6 +73,8 @@ object FileLogger {
         if (!initialized) return
         logFile.writeText("")
     }
+
+    private val ALWAYS_LOGGED_LEVELS = setOf("WARN", "ERROR", "FATAL")
 
     fun logFilePath(): String = if (initialized) logFile.absolutePath else ""
 

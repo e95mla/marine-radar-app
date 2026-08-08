@@ -5,6 +5,7 @@ import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.marineradar.debug.FileLogger
+import com.example.marineradar.debug.PacketLogger
 import com.example.marineradar.location.BoatLocationProvider
 import com.example.marineradar.map.MapProviderType
 import com.example.marineradar.map.MapStyle
@@ -55,7 +56,12 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
      * Alla användarinställningar i ett objekt, laddade från disk vid start
      * och sparade vid varje ändring – se [RadarSettings]/[SettingsStore].
      */
-    private val _uiSettings = MutableStateFlow(settings.load())
+    private val _uiSettings = MutableStateFlow(settings.load().also {
+        // Loggarna måste känna till felsökningsläget redan innan första
+        // updateSettings-anropet, annars tappas loggning vid uppstart.
+        FileLogger.debugEnabled = it.debugMode
+        PacketLogger.enabled = it.debugMode
+    })
     val uiSettings: StateFlow<RadarSettings> = _uiSettings.asStateFlow()
 
     private val alarmPlayer = AlarmPlayer(application)
@@ -87,6 +93,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
             .getOrDefault(MapProviderType.OPENSTREETMAP)
         _radarOpacity.value = updated.radarOpacity
         _mapStyle.value = MapStyle.fromName(updated.mapStyleName)
+        FileLogger.debugEnabled = updated.debugMode
+        PacketLogger.enabled = updated.debugMode
     }
 
     /** Återställer alla inställningar till fabriksläge. */

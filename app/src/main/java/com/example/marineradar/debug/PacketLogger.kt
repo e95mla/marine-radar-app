@@ -51,6 +51,10 @@ object PacketLogger {
 
     private var packetFile: File? = null
 
+    /** Paketinsamling sker bara i felsökningsläge – annars slösad CPU/disk. */
+    @Volatile
+    var enabled: Boolean = false
+
     /** Måste anropas en gång vid appstart för att aktivera diskpersistens. */
     fun init(context: Context) {
         val dir = File(context.filesDir, "logs").apply { mkdirs() }
@@ -58,6 +62,7 @@ object PacketLogger {
     }
 
     fun log(entry: PacketLogEntry) {
+        if (!enabled) return
         val updated = (_entries.value + entry).takeLast(MAX_ENTRIES)
         _entries.value = updated
         persist(entry)

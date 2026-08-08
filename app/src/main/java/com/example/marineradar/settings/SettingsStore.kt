@@ -56,6 +56,7 @@ class SettingsStore(context: Context) {
                 "map_style",
                 if (prefs.getBoolean("map_dark_style", true)) "DARK" else "STANDARD"
             ) ?: d.mapStyleName,
+            debugMode = prefs.getBoolean("debug_mode", d.debugMode),
             verboseLogging = prefs.getBoolean("verbose_logging", d.verboseLogging)
         )
     }
@@ -89,6 +90,7 @@ class SettingsStore(context: Context) {
             .putString("map_provider", s.mapProviderName)
             .putFloat("radar_opacity", s.radarOpacity)
             .putString("map_style", s.mapStyleName)
+            .putBoolean("debug_mode", s.debugMode)
             .putBoolean("verbose_logging", s.verboseLogging)
             .apply()
     }

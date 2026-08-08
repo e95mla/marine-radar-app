@@ -40,21 +40,23 @@ fun DebugScreen(
     val saveFile = rememberSaveToFile()
 
     Column(modifier = modifier.fillMaxSize()) {
-        Button(
-            onClick = { saveFile(LogExport.suggestedFileName(), LogExport.buildFullReport()) },
+        // Diskret verktygsrad istället för två stora, emoji-tunga knappar.
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("\u2b07\ufe0f Ladda ner ALLT (applogg + paket + krasch) till en fil")
-        }
-        OutlinedButton(
-            onClick = { LogExport.shareFullReport(context) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp)
-        ) {
-            Text("\ud83d\udce4 Dela istället till en annan app")
+            Text(
+                "Loggar",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { LogExport.shareFullReport(context) }) { Text("Dela") }
+            FilledTonalButton(
+                onClick = { saveFile(LogExport.suggestedFileName(), LogExport.buildFullReport()) }
+            ) { Text("Spara fil") }
         }
 
         TabRow(selectedTabIndex = subTab) {

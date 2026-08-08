@@ -60,6 +60,13 @@ data class RadarSettings(
     val mapStyleName: String = "DARK",
 
     // --- Felsökning -------------------------------------------------
+    /**
+     * Huvudströmbrytare för felsökningsläget. Avstängt (normalläget) betyder
+     * att appen varken samlar paketloggar eller INFO-loggar – bara varningar
+     * och fel skrivs, så att en eventuell kraschrapport ändå finns kvar.
+     * Fliken "Felsökning" visas bara när det här är påslaget.
+     */
+    val debugMode: Boolean = false,
     /** Loggar varje spoke-paket (mycket data – bara vid felsökning). */
     val verboseLogging: Boolean = false
 ) {

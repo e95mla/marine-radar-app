@@ -97,17 +97,34 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
         if (appState !is RadarAppState.Streaming) fullscreen = false
     }
 
+    // Bakåtknappen tar dig stegvis tillbaka: helskärm -> normalvy ->
+    // flik 0 -> startvyn (koppla radar/emulator). Först därifrån får
+    // systemet stänga appen, vilket gör en "Avsluta"-knapp i toppen onödig.
+    androidx.activity.compose.BackHandler(
+        enabled = fullscreen || tab != 0 || appState !is RadarAppState.Disconnected
+    ) {
+        when {
+            fullscreen -> fullscreen = false
+            tab != 0 -> tab = 0
+            else -> viewModel.reset()
+        }
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            // Felsökningsfliken finns bara när felsökningsläget är på – i
+            // normal drift ska den inte ta plats i toppen. Om läget stängs av
+            // medan man står på fliken flyttas man tillbaka till radarvyn.
+            LaunchedEffect(settings.debugMode) {
+                if (!settings.debugMode && tab == 2) tab = 0
+            }
+
             if (!fullscreen) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TabRow(selectedTabIndex = tab, modifier = Modifier.weight(1f)) {
-                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
-                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Inställningar") })
+                TabRow(selectedTabIndex = tab, modifier = Modifier.fillMaxWidth()) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Radar") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Inställningar") })
+                    if (settings.debugMode) {
                         Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Felsökning") })
-                    }
-                    TextButton(onClick = onExit) {
-                        Text("✕ Avsluta", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -122,7 +139,7 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                 return@Column
             }
 
-            if (tab == 2 && !fullscreen) {
+            if (tab == 2 && settings.debugMode && !fullscreen) {
                 DebugScreen(
                     portScanner = network?.let { RadarPortScanner(it) },
                     passiveScanner = network?.let { RadarPassiveScanner(it) },
@@ -163,12 +180,24 @@ fun RadarScreen(viewModel: RadarViewModel, onExit: () -> Unit) {
                         OutlinedButton(onClick = { viewModel.connectEmulator() }) {
                             Text("🧪 Testa med emulator (ingen radar behövs)")
                         }
+                        Spacer(Modifier.height(24.dp))
+                        // Avsluta hör hemma här på startvyn – tillbaka-knappen
+                        // räcker för att ta sig hit från radarläget, så toppen
+                        // behöver ingen permanent stängningsknapp.
+                        TextButton(onClick = onExit) {
+                            Text("Avsluta appen", color = MaterialTheme.colorScheme.error)
+                        }
                         if (state is RadarAppState.Error) {
                             Spacer(Modifier.height(12.dp))
                             Text(state.message, color = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = { tab = 2 }) {
-                                Text("Visa felsökningslogg")
+                            TextButton(
+                                onClick = { if (settings.debugMode) tab = 2 else tab = 1 }
+                            ) {
+                                Text(
+                                    if (settings.debugMode) "Visa felsökningslogg"
+                                    else "Slå på felsökningsläge i Inställningar"
+                                )
                             }
                         }
                     }

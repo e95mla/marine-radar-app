@@ -207,10 +207,16 @@ fun SettingsScreen(
 
         SectionTitle("Felsökning")
         SettingSwitch(
+            "Felsökningsläge",
+            "Visar fliken Felsökning och samlar detaljerade loggar. Håll avstängt " +
+                "i normal användning – fel och kraschar sparas ändå.",
+            settings.debugMode
+        ) { v -> onChange { it.copy(debugMode = v, verboseLogging = if (v) it.verboseLogging else false) } }
+        SettingSwitch(
             "Utförlig loggning",
             "Loggar även paketnivå – mycket data, använd bara vid felsökning.",
-            settings.verboseLogging
-        ) { v -> onChange { it.copy(verboseLogging = v) } }
+            settings.verboseLogging && settings.debugMode
+        ) { v -> onChange { it.copy(verboseLogging = v, debugMode = it.debugMode || v) } }
 
         Spacer(Modifier.height(12.dp))
         OutlinedButton(onClick = onResetSettings) { Text("Återställ alla inställningar") }
