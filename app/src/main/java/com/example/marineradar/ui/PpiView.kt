@@ -64,6 +64,13 @@ fun PpiView(
     var cursor by remember { mutableStateOf<Offset?>(null) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
+    // Avståndsringarna bränns in i bitmappen av PpiRenderer (så att de följer
+    // med även när bilden läggs ovanpå kartan). Därför måste inställningen
+    // skickas ner dit – annars låg ringarna kvar hur man än ställde den.
+    LaunchedEffect(renderer, settings.showRangeRings) {
+        renderer?.setShowRangeRings(settings.showRangeRings)
+    }
+
     LaunchedEffect(renderer) {
         if (renderer == null) return@LaunchedEffect
         while (true) {

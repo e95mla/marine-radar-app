@@ -33,9 +33,23 @@ class BoatLocationProvider(private val context: Context) : SensorEventListener {
     private val _location = MutableStateFlow<LatLng?>(null)
     val location: StateFlow<LatLng?> = _location.asStateFlow()
 
-    /** Kompasskurs i grader, 0 = norr, medurs. */
+    /**
+     * Kursen som resten av appen ska använda, 0 = norr, medurs.
+     *
+     * Ombord är det BÅTENS färdriktning som gäller, inte åt vilket håll
+     * telefonen råkar hållas. Så snart GPS:en rapporterar en kurs över grund
+     * med fart över [GPS_HEADING_MIN_MS] används den; står båten stilla (då
+     * är GPS-kursen bara brus) faller vi tillbaka på telefonens kompass.
+     */
     private val _headingDegrees = MutableStateFlow(0f)
     val headingDegrees: StateFlow<Float> = _headingDegrees.asStateFlow()
+
+    /** Senaste kompassvärdet, används bara när GPS-kurs saknas. */
+    private var compassHeading = 0f
+
+    /** true när [headingDegrees] kommer från GPS-kursen (båtens riktning). */
+    private val _headingFromGps = MutableStateFlow(false)
+    val headingFromGps: StateFlow<Boolean> = _headingFromGps.asStateFlow()
 
     private var started = false
 
@@ -51,7 +65,21 @@ class BoatLocationProvider(private val context: Context) : SensorEventListener {
         _location.value = LatLng(loc.latitude, loc.longitude)
         if (loc.hasSpeed()) _speedKnots.value = loc.speed * 1.94384f
         // GPS-bäring är bara meningsfull när man faktiskt rör sig.
-        if (loc.hasBearing() && loc.speed > 0.3f) _courseOverGround.value = loc.bearing
+        if (loc.hasBearing() && loc.speed > GPS_HEADING_MIN_MS) {
+            _courseOverGround.value = loc.bearing
+            lastCourseAt = System.currentTimeMillis()
+        }
+        updateHeading()
+    }
+
+    /** Tidpunkt för senaste giltiga GPS-kurs, så en gammal kurs inte fastnar. */
+    private var lastCourseAt = 0L
+
+    private fun updateHeading() {
+        val cog = _courseOverGround.value
+        val fresh = cog != null && System.currentTimeMillis() - lastCourseAt < COURSE_MAX_AGE_MS
+        _headingFromGps.value = fresh
+        _headingDegrees.value = if (fresh) cog!! else compassHeading
     }
 
     @SuppressLint("MissingPermission") // behörighet kontrolleras/begärs redan i MainActivity
@@ -103,11 +131,19 @@ class BoatLocationProvider(private val context: Context) : SensorEventListener {
             val orientation = FloatArray(3)
             SensorManager.getOrientation(rotationMatrix, orientation)
             val azimuthDegrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
-            _headingDegrees.value = (azimuthDegrees + 360f) % 360f
+            compassHeading = (azimuthDegrees + 360f) % 360f
+            updateHeading()
         } catch (_: Exception) {
             // Ignorera enstaka trasiga sensoravläsningar.
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    private companion object {
+        /** ~0,6 knop – under det är GPS-kursen inte tillförlitlig. */
+        const val GPS_HEADING_MIN_MS = 0.3f
+        /** Hur länge en GPS-kurs får användas efter senaste fix. */
+        const val COURSE_MAX_AGE_MS = 10_000L
+    }
 }

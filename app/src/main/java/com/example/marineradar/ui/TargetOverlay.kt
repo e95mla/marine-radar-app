@@ -46,20 +46,34 @@ fun TargetOverlay(
         if (settings.showRangeRings) {
             for (i in 1..4) {
                 drawCircle(
-                    color = Color.White.copy(alpha = 0.14f),
+                    color = Color.White.copy(alpha = 0.20f),
                     radius = maxRadius * i / 4f,
                     center = Offset(cx, cy),
                     style = Stroke(width = 1.5f)
                 )
             }
+            // Avståndstext på varje ring – gör det direkt synligt att
+            // inställningen faktiskt slår igenom.
+            drawContext.canvas.nativeCanvas.apply {
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(170, 255, 255, 255)
+                    textSize = 18f
+                    isAntiAlias = true
+                }
+                for (i in 1..4) {
+                    val r = maxRadius * i / 4f
+                    val nm = rangeMeters * i / 4f / 1852f
+                    drawText("%.2f NM".format(nm), cx + 4f, cy - r - 4f, paint)
+                }
+            }
         }
 
         if (settings.showHeadingLine) {
             drawLine(
-                color = Color.White.copy(alpha = 0.35f),
+                color = Color.White.copy(alpha = 0.55f),
                 start = Offset(cx, cy),
                 end = Offset(cx, cy - maxRadius),
-                strokeWidth = 2f
+                strokeWidth = 2.5f
             )
         }
 
@@ -133,7 +147,7 @@ fun TargetOverlay(
 
             // Fartygssymbol: en spets som pekar åt målets kurs när kursen är
             // känd, annars en neutral ring. Farliga mål fylls i så de syns
-            // direkt även i en rörig ekobild.
+            // direkt även i en rorig ekobild.
             if (course != null) {
                 val rad = Math.toRadians(course.toDouble())
                 val dirX = sin(rad).toFloat()

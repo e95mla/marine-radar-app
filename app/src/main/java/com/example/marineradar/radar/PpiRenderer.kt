@@ -42,6 +42,23 @@ class PpiRenderer(private val sizePx: Int = 720) {
     val center = sizePx / 2f
     val maxRadius = sizePx / 2f - 6f
 
+    /**
+     * Avståndsringarna bränns in i bitmappen (de ska synas även när bilden
+     * används som kartöverlägg). Därför måste inställningen "Avståndsringar"
+     * nå ända hit – annars syntes ringarna kvar hur man än ställde den.
+     */
+    @Volatile
+    var showRangeRings: Boolean = true
+        private set
+
+    fun setShowRangeRings(value: Boolean) {
+        if (value == showRangeRings) return
+        showRangeRings = value
+        // Ringarna ligger under ekona, så enda sättet att ta bort dem är att
+        // rita om dekoren från grunden. Bilden byggs upp igen på ett svep.
+        clear()
+    }
+
     private val _tick = MutableStateFlow(0)
     val tick: StateFlow<Int> = _tick.asStateFlow()
 
@@ -58,8 +75,10 @@ class PpiRenderer(private val sizePx: Int = 720) {
      */
     fun clear() {
         canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        for (i in 1..4) {
-            canvas.drawCircle(center, center, maxRadius * i / 4, ringPaint)
+        if (showRangeRings) {
+            for (i in 1..4) {
+                canvas.drawCircle(center, center, maxRadius * i / 4, ringPaint)
+            }
         }
         canvas.drawCircle(center, center, 4f, centerPaint)
         bump()
